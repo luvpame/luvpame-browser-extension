@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
-import {
-  featureKeys,
-  featureLabels,
-  watchFeatures,
-  saveFeature,
-  type Features,
-  type FeatureKey,
-} from "../../lib/features";
+import { watchFeatures, type Features } from "../../lib/features";
+import { FeatureToggles } from "../../lib/feature-toggles";
 import { reviewTemplate } from "../../features/lgtm/shared/storage";
 import { prepareTemplate } from "../../features/lgtm/shared/template";
 import { readUrlPolicy } from "../../features/vim/src/url-settings";
@@ -23,7 +17,6 @@ import "../../lib/ui.css";
 
 function Options() {
   const [features, setFeatures] = useState<Features>();
-  const [pending, setPending] = useState<FeatureKey[]>([]);
   const [template, setTemplate] = useState("");
   const [mode, setMode] = useState<UrlPolicyMode>("blocklist");
   const [patterns, setPatterns] = useState("");
@@ -41,17 +34,6 @@ function Options() {
       .catch((error) => setStatus(errorText(error)));
     return watchFeatures(setFeatures, (error) => setStatus(errorText(error)));
   }, []);
-  const toggle = async (key: FeatureKey, value: boolean) => {
-    setPending((keys) => [...keys, key]);
-    try {
-      await saveFeature(key, value);
-      setStatus("機能設定を保存しました。");
-    } catch (error) {
-      setStatus(errorText(error));
-    } finally {
-      setPending((keys) => keys.filter((k) => k !== key));
-    }
-  };
   const save = async () => {
     const prepared = prepareTemplate(template);
     if (!prepared.ok) {
@@ -84,20 +66,7 @@ function Options() {
       <p className="hint">
         機能のON/OFFはこのブラウザに保存され、開いているタブにも反映されます。OFFにしてもサイトへのアクセス権限は解除されません。
       </p>
-      <fieldset>
-        <legend>機能</legend>
-        {featureKeys.map((key) => (
-          <label key={key}>
-            <input
-              type="checkbox"
-              checked={features?.[key] ?? false}
-              disabled={!features || pending.includes(key)}
-              onChange={(e) => void toggle(key, e.target.checked)}
-            />
-            {featureLabels[key]}
-          </label>
-        ))}
-      </fieldset>
+      <FeatureToggles features={features} onStatus={setStatus} />
       <form
         onSubmit={(e) => {
           e.preventDefault();

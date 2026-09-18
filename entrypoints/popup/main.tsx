@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 import { watchFeatures, type Features } from "../../lib/features";
 import { COPY_REQUEST, type CopyKind, isRecord, errorText } from "../../lib/copy-protocol";
+import { FeatureToggles } from "../../lib/feature-toggles";
 import "../../lib/ui.css";
 
 function Popup() {
@@ -66,6 +67,7 @@ function Popup() {
         設定
       </button>
       <p role="status">{status}</p>
+      <FeatureToggles features={features} onStatus={setStatus} />
     </main>
   );
 }
