@@ -1,0 +1,133 @@
+[data-fast-lgtm-root] {
+  --fast-lgtm-paper: var(--bgColor-default, oklch(98% 0.004 145));
+  --fast-lgtm-ink: var(--fgColor-default, oklch(22% 0.018 145));
+  --fast-lgtm-accent: var(--button-primary-bgColor-rest, oklch(52% 0.17 145));
+  --fast-lgtm-accent-hover: var(--button-primary-bgColor-hover, oklch(45% 0.17 145));
+  --fast-lgtm-accent-ink: var(--button-primary-fgColor-rest, oklch(98% 0.008 145));
+  --fast-lgtm-focus: var(--focus-outlineColor, oklch(58% 0.18 250));
+  --fast-lgtm-error: var(--fgColor-danger, oklch(46% 0.18 28));
+  --fast-lgtm-error-ink: var(--button-danger-fgColor-rest, oklch(98% 0.008 28));
+  --fast-lgtm-success: var(--fgColor-success, oklch(45% 0.16 145));
+  --fast-lgtm-spinner-track: color-mix(in oklch, var(--fast-lgtm-accent-ink) 35%, transparent);
+  --fast-lgtm-shadow: var(--shadow-resting-small, 0 1px 3px oklch(20% 0.01 145 / 0.12));
+  --fast-lgtm-font: var(
+    --fontStack-sans,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif
+  );
+  --fast-lgtm-space-2: 0.5rem;
+  --fast-lgtm-space-3: 0.75rem;
+  --fast-lgtm-radius: 0.375rem;
+  --fast-lgtm-duration: 120ms;
+  --fast-lgtm-spinner-duration: 700ms;
+  --fast-lgtm-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --fast-lgtm-z-alert: 100;
+
+  display: inline-flex;
+  position: relative;
+  align-items: center;
+  margin-inline-end: var(--fast-lgtm-space-2);
+}
+
+.fast-lgtm-controls {
+  display: inline-flex;
+  align-items: center;
+}
+
+.fast-lgtm-button {
+  min-width: 3.5rem;
+  min-height: 2rem;
+  border: 1px solid var(--fast-lgtm-accent);
+  border-radius: var(--fast-lgtm-radius);
+  background: var(--fast-lgtm-accent);
+  color: var(--fast-lgtm-accent-ink);
+  font-family: var(--fast-lgtm-font);
+  white-space: nowrap;
+  transition:
+    background-color var(--fast-lgtm-duration) var(--fast-lgtm-ease-out),
+    transform var(--fast-lgtm-duration) var(--fast-lgtm-ease-out);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .fast-lgtm-button:hover {
+    background: var(--fast-lgtm-accent-hover);
+  }
+}
+
+.fast-lgtm-button:focus-visible {
+  outline: 2px solid var(--fast-lgtm-paper);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--fast-lgtm-focus);
+}
+
+.fast-lgtm-button:active {
+  transform: translateY(1px);
+}
+
+.fast-lgtm-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.fast-lgtm-button[data-state="loading"] {
+  cursor: wait;
+}
+
+.fast-lgtm-button[data-state="loading"]::after {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-inline-start: var(--fast-lgtm-space-2);
+  border: 2px solid var(--fast-lgtm-spinner-track);
+  border-top-color: var(--fast-lgtm-accent-ink);
+  border-radius: 50%;
+  content: "";
+  vertical-align: -0.125rem;
+  animation: fast-lgtm-spin var(--fast-lgtm-spinner-duration) linear infinite;
+}
+
+.fast-lgtm-button[data-state="error"] {
+  border-color: var(--fast-lgtm-error);
+  background: var(--fast-lgtm-error);
+  color: var(--fast-lgtm-error-ink);
+}
+
+.fast-lgtm-button[data-state="success"] {
+  border-color: var(--fast-lgtm-success);
+  background: var(--fast-lgtm-success);
+}
+
+.fast-lgtm-alert {
+  position: absolute;
+  z-index: var(--fast-lgtm-z-alert);
+  inset-block-start: calc(100% + var(--fast-lgtm-space-2));
+  inset-inline-end: 0;
+  width: min(20rem, calc(100vw - (var(--fast-lgtm-space-3) * 2)));
+  padding: var(--fast-lgtm-space-2) var(--fast-lgtm-space-3);
+  border: 1px solid var(--fast-lgtm-error);
+  border-radius: var(--fast-lgtm-radius);
+  background: var(--fast-lgtm-paper);
+  box-shadow: var(--fast-lgtm-shadow);
+  color: var(--fast-lgtm-ink);
+  font: inherit;
+  line-height: 1.4;
+}
+
+@keyframes fast-lgtm-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fast-lgtm-button {
+    transition-duration: 0ms;
+  }
+
+  .fast-lgtm-button[data-state="loading"]::after {
+    animation: none;
+  }
+}

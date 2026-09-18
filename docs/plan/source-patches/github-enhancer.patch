@@ -1,0 +1,128 @@
+diff --git a/entrypoints/github.content.ts b/entrypoints/github.content.ts
+index 7fb44a9..db432e9 100644
+--- a/entrypoints/github.content.ts
++++ b/entrypoints/github.content.ts
+@@ -54,6 +54,37 @@ export const getRepositoryFromLocation = (url: URL): RepositoryLocation | null =
+ 
+ export const createStorageChangeHandler = (refresh: () => void): (() => void) => refresh;
+ 
++export const isExtensionContextInvalidatedError = (error: unknown): boolean =>
++  error instanceof Error && error.message.includes("Extension context invalidated");
++
++export const createFeatureRefresher = (
++  getSettings: () => Promise<EnhancerSettings>,
++  apply: (settings: EnhancerSettings) => void,
++): { refresh: () => void; invalidate: () => void } => {
++  let invalidated = false;
++
++  const refresh = () => {
++    void getSettings()
++      .then((settings) => {
++        if (!invalidated) {
++          apply(settings);
++        }
++      })
++      .catch((error: unknown) => {
++        if (!invalidated || !isExtensionContextInvalidatedError(error)) {
++          throw error;
++        }
++      });
++  };
++
++  return {
++    refresh,
++    invalidate: () => {
++      invalidated = true;
++    },
++  };
++};
++
+ const getSha2FromUrl = (url: string): string | null => {
+   try {
+     return new URL(url, window.location.origin).searchParams.get("sha2");
+@@ -147,17 +178,11 @@ export const applySettings = (
+   ensureHtmlPreviewButtons(document, { ...repository, ...headLocation });
+ };
+ 
+-const applyFeatures = async (): Promise<void> => {
+-  const settings = await getExtensionSettings();
+-  applySettings(settings);
+-};
+-
+ export default defineContentScript({
+   matches: GITHUB_CONTENT_MATCHES,
+   main(ctx) {
+-    const refresh = () => {
+-      void applyFeatures();
+-    };
++    const featureRefresher = createFeatureRefresher(getExtensionSettings, applySettings);
++    const { refresh } = featureRefresher;
+     const observer = new MutationObserver(refresh);
+     const observedNode = document.body ?? document.documentElement;
+ 
+@@ -171,6 +196,7 @@ export default defineContentScript({
+     browser.storage.onChanged.addListener(handleStorageChange);
+ 
+     ctx.onInvalidated(() => {
++      featureRefresher.invalidate();
+       observer.disconnect();
+       browser.storage.onChanged.removeListener(handleStorageChange);
+     });
+diff --git a/tests/github-content.spec.ts b/tests/github-content.spec.ts
+index 102cd6f..34fb7d6 100644
+--- a/tests/github-content.spec.ts
++++ b/tests/github-content.spec.ts
+@@ -1,7 +1,8 @@
+-import { describe, expect, it } from "vite-plus/test";
++import { describe, expect, it, vi } from "vite-plus/test";
+ 
+ import {
+   applySettings,
++  createFeatureRefresher,
+   createStorageChangeHandler,
+   GITHUB_CONTENT_MATCHES,
+   getHeadRef,
+@@ -9,6 +10,8 @@ import {
+   getRepositoryFromLocation,
+ } from "../entrypoints/github.content";
+ 
++const waitForPromises = (): Promise<void> => new Promise((resolve) => queueMicrotask(resolve));
++
+ describe("github content helpers", () => {
+   it("extracts owner and repo from GitHub PR URLs", () => {
+     expect(getRepositoryFromLocation(new URL("https://github.com/luvpame/demo/pull/1"))).toEqual({
+@@ -33,6 +36,34 @@ describe("github content helpers", () => {
+     expect(calls).toBe(1);
+   });
+ 
++  it("skips applying settings after the content script is invalidated", async () => {
++    const getSettings = vi.fn().mockResolvedValue({
++      prCopyEnabled: true,
++      htmlPreviewEnabled: true,
++      devinRedirectEnabled: true,
++    });
++    const apply = vi.fn();
++    const refresher = createFeatureRefresher(getSettings, apply);
++
++    refresher.refresh();
++    refresher.invalidate();
++    await waitForPromises();
++
++    expect(apply).not.toHaveBeenCalled();
++  });
++
++  it("ignores extension context invalidation while shutting down", async () => {
++    const getSettings = vi.fn().mockRejectedValue(new Error("Extension context invalidated."));
++    const apply = vi.fn();
++    const refresher = createFeatureRefresher(getSettings, apply);
++
++    refresher.refresh();
++    refresher.invalidate();
++    await waitForPromises();
++
++    expect(apply).not.toHaveBeenCalled();
++  });
++
+   it("runs on GitHub repository pages beyond pull requests", () => {
+     expect(GITHUB_CONTENT_MATCHES).toEqual(["https://github.com/*"]);
+   });

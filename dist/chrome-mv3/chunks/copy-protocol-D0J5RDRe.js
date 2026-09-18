@@ -1,0 +1,1 @@
+var e=globalThis.browser?.runtime?.id?globalThis.browser:globalThis.chrome,t=e,n=`luvpame:copy`,r=e=>typeof e==`object`&&!!e,i=e=>r(e)&&e.type===`luvpame:offscreen-copy`&&typeof e.requestId==`string`&&(e.mode===`text`||e.mode===`html`)&&typeof e.text==`string`&&typeof e.url==`string`,a=e=>e instanceof Error?e.message:String(e);export{t as a,r as i,a as n,e as o,i as r,n as t};

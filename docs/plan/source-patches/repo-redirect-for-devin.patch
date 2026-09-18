@@ -1,0 +1,28 @@
+diff --git a/wxt.config.ts b/wxt.config.ts
+index 429f2b9..8c1084f 100644
+--- a/wxt.config.ts
++++ b/wxt.config.ts
+@@ -1,6 +1,22 @@
+-import { defineConfig } from 'wxt';
++import { defineConfig, type UserManifest } from 'wxt';
+ 
+ // See https://wxt.dev/api/config.html
+ export default defineConfig({
+   modules: ['@wxt-dev/module-react'],
++  manifest: ({ browser }) => {
++    if (browser !== 'firefox') {
++      return {};
++    }
++
++    return {
++      browser_specific_settings: {
++        gecko: {
++          // Required by Firefox add-on validation. This key is newer than current WXT typings.
++          data_collection_permissions: {
++            required: ['none'],
++          },
++        },
++      },
++    } as UserManifest;
++  },
+ });

@@ -1,0 +1,7 @@
+node_modules/
+.wxt/
+.output/
+.vite/
+.DS_Store
+web-ext.config.ts
+*.log
