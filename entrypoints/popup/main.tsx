@@ -46,26 +46,30 @@ function Popup() {
   };
   return (
     <main className="popup">
-      <h1>Luvpame</h1>
-      <button
-        disabled={busy || tabId === undefined || !features?.urlCopyEnabled}
-        onClick={() => void copy("url")}
-      >
-        URLをMarkdownでコピー{features?.urlCopyEnabled === false ? "（OFF）" : ""}
-      </button>
-      <button
-        disabled={busy || tabId === undefined || !features?.bodyCopyEnabled}
-        onClick={() => void copy("body")}
-      >
-        本文をMarkdownでコピー{features?.bodyCopyEnabled === false ? "（OFF）" : ""}
-      </button>
-      <button
-        onClick={() =>
-          void browser.runtime.openOptionsPage().catch((error) => setStatus(errorText(error)))
-        }
-      >
-        設定
-      </button>
+      <header className="popup-header">
+        <h1>Luvpame</h1>
+        <button
+          onClick={() =>
+            void browser.runtime.openOptionsPage().catch((error) => setStatus(errorText(error)))
+          }
+        >
+          設定
+        </button>
+      </header>
+      <div className="popup-actions">
+        <button
+          disabled={busy || tabId === undefined || !features?.urlCopyEnabled}
+          onClick={() => void copy("url")}
+        >
+          URLをMarkdownでコピー{features?.urlCopyEnabled === false ? "（OFF）" : ""}
+        </button>
+        <button
+          disabled={busy || tabId === undefined || !features?.bodyCopyEnabled}
+          onClick={() => void copy("body")}
+        >
+          本文をMarkdownでコピー{features?.bodyCopyEnabled === false ? "（OFF）" : ""}
+        </button>
+      </div>
       <p role="status">{status}</p>
       <FeatureToggles features={features} onStatus={setStatus} />
     </main>

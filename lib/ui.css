@@ -87,8 +87,11 @@ legend {
   color: light-dark(#53665a, #b1c4b8);
 }
 .popup {
-  width: 310px;
+  box-sizing: border-box;
+  width: 720px;
   padding: 20px;
+  font-size: 18px;
+  line-height: 1.45;
 }
 .popup button {
   width: 100%;
@@ -107,7 +110,39 @@ legend {
 }
 .popup .feature-toggles {
   box-sizing: border-box;
-  max-height: 240px;
-  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 20px;
   margin-bottom: 0;
+}
+
+.popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.popup-header h1 {
+  font-size: 26px;
+  margin: 0;
+}
+.popup .popup-header button {
+  width: auto;
+  margin: 0;
+}
+.popup-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.popup [role="status"] {
+  margin: 8px 0;
+}
+.popup .feature-toggles label {
+  margin: 0;
+}
+.popup .feature-toggles input {
+  width: 20px;
+  height: 20px;
 }
