@@ -7,12 +7,7 @@ import type {
   TranslationOptions,
 } from "./shared";
 import { translationPrompt, TRANSLATION_STOP } from "./prompt";
-import {
-  scheduleTranslation,
-  notifyTranslationReady,
-  translationCache,
-  translationCacheKey,
-} from "./scheduler";
+import { scheduleTranslation, translationCache, translationCacheKey } from "./scheduler";
 
 type LoadedModel = { runtime: Wllama; model: TranslationModel; device: TranslationDevice };
 
@@ -86,6 +81,8 @@ async function loadModel(
         n_ctx: device === "gpu" ? 8192 : 4096,
         n_parallel: device === "gpu" ? 2 : 1,
         kv_unified: false,
+        swa_full: true,
+        ...(device === "gpu" ? { cont_batching: true } : {}),
         n_gpu_layers: device === "gpu" ? 999 : 0,
         n_threads: Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 2) / 2))),
         cache_idle_slots: false,
@@ -122,7 +119,6 @@ async function runTranslation(
 ): Promise<{ text: string; device: TranslationDevice }> {
   options.signal.throwIfAborted();
   const loaded = await loadModel(model, options);
-  notifyTranslationReady();
   options.signal.throwIfAborted();
   options.onProgress(
     target === "ja-easy" ? "やさしい日本語に訳しています…" : "日本語に訳しています…",

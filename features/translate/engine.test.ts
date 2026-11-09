@@ -93,6 +93,8 @@ describe("translate", () => {
         n_parallel: 2,
         n_ctx: 8192,
         kv_unified: false,
+        swa_full: true,
+        cont_batching: true,
         n_gpu_layers: 999,
         cache_idle_slots: false,
       }),
@@ -359,7 +361,7 @@ it("retries the same source after a failed or aborted completion", async () => {
   expect(mocks.complete).toHaveBeenCalledTimes(4);
 });
 
-it("loads once, runs at most two GPU chunks of one model and drains both before switching", async () => {
+it("starts one cold GPU chunk, then drains whole two-chunk waves before switching", async () => {
   const { translate } = await import("./engine");
   const finish: (() => void)[] = [];
   let active = 0;
@@ -380,19 +382,28 @@ it("loads once, runs at most two GPU chunks of one model and drains both before 
     translate("first", "ja", "2b", options()),
     translate("second", "ja", "2b", options()),
     translate("third", "ja", "2b", options()),
+    translate("fourth", "ja", "2b", options()),
     translate("other model", "ja", "0.8b", options()),
   ];
-  await vi.waitFor(() => expect(finish).toHaveLength(2));
+  await vi.waitFor(() => expect(finish).toHaveLength(1));
   expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(active).toBe(1);
   finish[0]?.();
   await vi.waitFor(() => expect(finish).toHaveLength(3));
-  finish[2]?.();
-  await Promise.resolve();
-  expect(mocks.exit).not.toHaveBeenCalled();
+  expect(active).toBe(2);
   finish[1]?.();
+  await tasks[1];
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  expect(finish).toHaveLength(3);
+  expect(active).toBe(1);
+  expect(mocks.exit).not.toHaveBeenCalled();
+  finish[2]?.();
   await vi.waitFor(() => expect(finish).toHaveLength(4));
-  expect(mocks.exit).toHaveBeenCalledTimes(1);
+  expect(mocks.exit).not.toHaveBeenCalled();
   finish[3]?.();
+  await vi.waitFor(() => expect(finish).toHaveLength(5));
+  expect(mocks.exit).toHaveBeenCalledTimes(1);
+  finish[4]?.();
   await Promise.all(tasks);
   expect(peak).toBe(2);
 });
@@ -412,7 +423,7 @@ it("keeps CPU inference serial with its original context budget", async () => {
   await vi.waitFor(() => expect(finish).toHaveLength(1));
   expect(mocks.load).toHaveBeenCalledWith(
     expect.any(String),
-    expect.objectContaining({ n_parallel: 1, n_ctx: 4096, n_gpu_layers: 0 }),
+    expect.objectContaining({ n_parallel: 1, n_ctx: 4096, n_gpu_layers: 0, swa_full: true }),
   );
   finish[0]?.();
   await vi.waitFor(() => expect(finish).toHaveLength(2));
@@ -422,6 +433,7 @@ it("keeps CPU inference serial with its original context budget", async () => {
 
 it("cancels one GPU chunk without interrupting the other chunk or unloading its model", async () => {
   const { translate } = await import("./engine");
+  await translate("warm GPU", "ja", "2b", options());
   const finish: (() => void)[] = [];
   mocks.complete.mockImplementation(async (params: CompletionOptions) => {
     await new Promise<void>((resolve, reject) => {

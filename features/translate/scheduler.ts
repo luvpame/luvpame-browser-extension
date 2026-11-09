@@ -11,24 +11,28 @@ type Resource = { group: string; capacity: () => number };
 type Job = Resource & { priority: number; run: () => Promise<void> };
 const pending: Job[] = [];
 let active = 0;
-let activeGroup = "";
 const priorities = { selection: 0, page: 1, article: 2 };
 
 function drain() {
+  if (active) return;
   pending.sort((a, b) => a.priority - b.priority);
-  while (pending.length) {
-    const next = pending[0];
-    if (!next || (active && (next.group !== activeGroup || active >= next.capacity()))) return;
-    pending.shift();
-    activeGroup = next.group;
-    active += 1;
-    void next.run().finally(() => {
+  const first = pending[0];
+  if (!first) return;
+  const capacity = first.capacity();
+  const wave: Job[] = [];
+  while (wave.length < capacity && pending[0]?.group === first.group) {
+    const next = pending.shift();
+    if (next) wave.push(next);
+  }
+  active = wave.length;
+  for (const job of wave) {
+    void job.run().finally(() => {
       active -= 1;
       notifyTranslationReady();
     });
   }
 }
-export const notifyTranslationReady = () => queueMicrotask(drain);
+const notifyTranslationReady = () => queueMicrotask(drain);
 
 export function scheduleTranslation<T>(
   options: TranslationOptions,
@@ -38,9 +42,13 @@ export function scheduleTranslation<T>(
   options.signal.throwIfAborted();
   options.onProgress("翻訳の順番を待っています…");
   return new Promise((resolve, reject) => {
-    const onAbort = () => reject(options.signal.reason);
-    options.signal.addEventListener("abort", onAbort, { once: true });
-    pending.push({
+    const onAbort = () => {
+      const index = pending.indexOf(job);
+      if (index !== -1) pending.splice(index, 1);
+      reject(options.signal.reason);
+      notifyTranslationReady();
+    };
+    const job: Job = {
       ...resource,
       priority: priorities[options.priority ?? "page"],
       run: async () => {
@@ -53,7 +61,9 @@ export function scheduleTranslation<T>(
           options.signal.removeEventListener("abort", onAbort);
         }
       },
-    });
+    };
+    options.signal.addEventListener("abort", onAbort, { once: true });
+    pending.push(job);
     notifyTranslationReady();
   });
 }

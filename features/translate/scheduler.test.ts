@@ -1,6 +1,73 @@
 import { expect, it, vi } from "vite-plus/test";
 import { scheduleTranslation, TranslationCache, translationCacheKey } from "./scheduler";
 
+it("waits for the whole wave before running a queued selection ahead of page work", async () => {
+  const started: string[] = [];
+  const finish = new Map<string, () => void>();
+  const capacity = vi.fn(() => 2);
+  const resource = { group: "gpu", capacity };
+  const enqueue = (name: string, priority: "page" | "selection" = "page") =>
+    scheduleTranslation(
+      { signal: new AbortController().signal, onProgress: vi.fn(), priority },
+      async () => {
+        started.push(name);
+        await new Promise<void>((resolve) => finish.set(name, resolve));
+      },
+      resource,
+    );
+  const first = enqueue("first");
+  const second = enqueue("second");
+  await vi.waitFor(() => expect(started).toEqual(["first", "second"]));
+  const page = enqueue("page");
+  finish.get("first")?.();
+  await first;
+  await new Promise<void>((resolve) => queueMicrotask(resolve));
+  expect(started).toEqual(["first", "second"]);
+  expect(capacity).toHaveBeenCalledTimes(1);
+  const selection = enqueue("selection", "selection");
+  finish.get("second")?.();
+  await vi.waitFor(() => expect(started).toEqual(["first", "second", "selection", "page"]));
+  expect(capacity).toHaveBeenCalledTimes(2);
+  finish.get("selection")?.();
+  finish.get("page")?.();
+  await Promise.all([first, second, page, selection]);
+});
+
+it("removes an aborted queued model so the next GPU wave can fill both slots", async () => {
+  const started: string[] = [];
+  const finish = new Map<string, () => void>();
+  const resource = { group: "gpu", capacity: () => 2 };
+  const options = { signal: new AbortController().signal, onProgress: vi.fn() };
+  const enqueue = (name: string) =>
+    scheduleTranslation(
+      options,
+      async () => {
+        started.push(name);
+        await new Promise<void>((resolve) => finish.set(name, resolve));
+      },
+      resource,
+    );
+  const active = enqueue("active");
+  await vi.waitFor(() => expect(started).toEqual(["active"]));
+  const first = enqueue("first");
+  const controller = new AbortController();
+  const cancelledRun = vi.fn();
+  const cancelled = scheduleTranslation({ ...options, signal: controller.signal }, cancelledRun, {
+    group: "other-model",
+    capacity: () => 1,
+  });
+  const rejected = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+  const second = enqueue("second");
+  controller.abort();
+  await rejected;
+  finish.get("active")?.();
+  await vi.waitFor(() => expect(started).toEqual(["active", "first", "second"]));
+  expect(cancelledRun).not.toHaveBeenCalled();
+  finish.get("first")?.();
+  finish.get("second")?.();
+  await Promise.all([active, first, second]);
+});
+
 it("lets a queued selection overtake page work without interrupting the active chunk", async () => {
   const order: string[] = [];
   let finish: () => void = () => {};

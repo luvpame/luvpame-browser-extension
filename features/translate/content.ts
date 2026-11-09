@@ -248,7 +248,8 @@ export function createTranslationController({
     };
     try {
       while (active && epoch === generation) {
-        while (tasks.size < 2) {
+        // 応答待ちで次の波が欠けないよう、実行2件に加えて次の2件を先読みする。
+        while (tasks.size < 4) {
           const next = Array.from(entries)
             .filter(([, entry]) => entry.state === "queued")
             .sort(([a], [b]) => {

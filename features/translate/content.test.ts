@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createTranslationController, extractArticle, splitTranslationText } from "./content";
 import { CANCEL_TRANSLATION, TRANSLATE, isTranslationRequest } from "./shared";
+import { scheduleTranslation } from "./scheduler";
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const controllers: ReturnType<typeof createTranslationController>[] = [];
@@ -284,7 +285,7 @@ describe("ページ翻訳", () => {
 
   it("順番待ちの段落は進捗で書き換えず、実行中の段落だけbusyにする", async () => {
     document.body.innerHTML =
-      "<p>First paragraph.</p><p>Second paragraph.</p><p>Third paragraph.</p>";
+      "<p>First paragraph.</p><p>Second paragraph.</p><p>Third paragraph.</p><p>Fourth paragraph.</p><p>Fifth paragraph.</p>";
     const pending: ((value: unknown) => void)[] = [];
     let sessionId = "";
     let requestId = "";
@@ -296,20 +297,38 @@ describe("ページ翻訳", () => {
     });
     controller.toggle();
     const hosts = [...document.querySelectorAll("[data-luvpame-translation]")];
-    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["true", "true", "false"]);
+    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual([
+      "true",
+      "true",
+      "true",
+      "true",
+      "false",
+    ]);
     controller.progress(sessionId, requestId, { kind: "status", message: "日本語に訳しています…" });
     expect(output()).toEqual([
       "日本語に訳しています…",
       "翻訳を待っています…",
       "翻訳を待っています…",
+      "翻訳を待っています…",
+      "翻訳を待っています…",
     ]);
     pending[0]!(success("最初の訳"));
     await tick();
-    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["false", "true", "true"]);
+    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual([
+      "false",
+      "true",
+      "true",
+      "true",
+      "true",
+    ]);
     pending[1]!(success("次の訳"));
-    pending[2]!(success("最後の訳"));
+    pending[2]!(success("3番目の訳"));
+    pending[3]!(success("4番目の訳"));
+    pending[4]!(success("最後の訳"));
     await tick();
     expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual([
+      "false",
+      "false",
       "false",
       "false",
       "false",
@@ -582,9 +601,9 @@ it("記事抽出にも本文の範囲と図・操作UIの除外を適用する",
 
 it("rechecks the viewport before filling each free paragraph slot", async () => {
   document.body.innerHTML =
-    "<p>First offscreen.</p><p>Second near.</p><p>Third visible.</p><p>Fourth moves.</p>";
+    "<p>First offscreen.</p><p>Second near.</p><p>Third visible.</p><p>Fourth near.</p><p>Fifth offscreen.</p><p>Sixth moves.</p>";
   const elements = [...document.querySelectorAll("p")];
-  const tops = [-2000, 900, 20, 2000];
+  const tops = [-2000, 900, 20, 1000, 3000, 4000];
   elements.forEach((element, index) =>
     vi
       .spyOn(element, "getBoundingClientRect")
@@ -598,17 +617,68 @@ it("rechecks the viewport before filling each free paragraph slot", async () => 
     return new Promise((resolve) => pending.push(() => resolve(success(message.text))));
   });
   controller.toggle();
-  expect(sent).toEqual(["Third visible.", "Second near."]);
-  tops[3] = 30;
+  expect(sent).toEqual(["Third visible.", "Second near.", "Fourth near.", "First offscreen."]);
+  tops[5] = 30;
   pending[0]?.();
   await tick();
-  expect(sent).toEqual(["Third visible.", "Second near.", "Fourth moves."]);
+  expect(sent.at(-1)).toBe("Sixth moves.");
   pending[1]?.();
   await tick();
-  expect(sent.at(-1)).toBe("First offscreen.");
+  expect(sent.at(-1)).toBe("Fifth offscreen.");
   pending[2]?.();
   pending[3]?.();
+  pending[4]?.();
+  pending[5]?.();
   await tick();
+});
+
+it("keeps two GPU chunks per warm wave despite delayed messaging without exceeding two inferences", async () => {
+  vi.useFakeTimers();
+  try {
+    document.body.innerHTML = Array.from(
+      { length: 12 },
+      (_, index) => `<p>Paragraph ${index}.</p>`,
+    ).join("");
+    const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+    const waves: number[] = [];
+    let warm = false;
+    let active = 0;
+    let peak = 0;
+    const resource = {
+      group: "gpu",
+      capacity: () => {
+        waves.push(0);
+        return warm ? 2 : 1;
+      },
+    };
+    const controller = mount(async (message) => {
+      if (!isTranslationRequest(message)) return undefined;
+      await delay(5);
+      const result = await scheduleTranslation(
+        { signal: new AbortController().signal, onProgress: vi.fn() },
+        async () => {
+          waves[waves.length - 1] = (waves[waves.length - 1] ?? 0) + 1;
+          warm = true;
+          active += 1;
+          peak = Math.max(peak, active);
+          await delay(30);
+          active -= 1;
+          return success(message.text);
+        },
+        resource,
+      );
+      await delay(10);
+      return result;
+    });
+    controller.toggle();
+    await vi.runAllTimersAsync();
+    expect(waves).toEqual([1, 2, 2, 2, 2, 2, 1]);
+    expect(peak).toBe(2);
+    expect(active).toBe(0);
+    expect(output()).toEqual(Array.from({ length: 12 }, (_, index) => `Paragraph ${index}.`));
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 it("keeps completed chunks while streaming the current one and ignores old requests and changed source", async () => {
