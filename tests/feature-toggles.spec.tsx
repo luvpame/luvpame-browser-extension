@@ -19,10 +19,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it("shows all twelve switches and disables them until settings load", async () => {
+it("shows all thirteen switches and disables them until settings load", async () => {
   await act(async () => root.render(<FeatureToggles onStatus={vi.fn()} />));
   const inputs = [...container.querySelectorAll("input")];
-  expect(inputs).toHaveLength(12);
+  expect(inputs).toHaveLength(13);
   expect(inputs.every((input) => input.disabled)).toBe(true);
   await act(async () =>
     root.render(
@@ -77,6 +77,10 @@ it("reflects stored changes in the visible switches through the existing watcher
     );
   });
   await act(async () => listener!({ mergeGuardEnabled: { newValue: false } }, "local"));
-  expect([...container.querySelectorAll("input")].at(-1)?.checked).toBe(false);
+  expect(
+    [...container.querySelectorAll("label")]
+      .find((label) => label.textContent?.includes("Devin Review: マージ"))
+      ?.querySelector("input")?.checked,
+  ).toBe(false);
   stop();
 });

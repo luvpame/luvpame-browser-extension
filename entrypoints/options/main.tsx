@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { browser } from "wxt/browser";
 import { watchFeatures, type Features } from "../../lib/features";
 import { FeatureToggles } from "../../lib/feature-toggles";
+import { TranslationModelSettings } from "../../features/translate/model-settings";
 import { reviewTemplate } from "../../features/lgtm/shared/storage";
 import { prepareTemplate } from "../../features/lgtm/shared/template";
 import { readUrlPolicy } from "../../features/vim/src/url-settings";
@@ -67,6 +68,7 @@ function Options() {
         機能のON/OFFはこのブラウザに保存され、開いているタブにも反映されます。OFFにしてもサイトへのアクセス権限は解除されません。
       </p>
       <FeatureToggles features={features} onStatus={setStatus} />
+      <TranslationModelSettings />
       <form
         onSubmit={(e) => {
           e.preventDefault();

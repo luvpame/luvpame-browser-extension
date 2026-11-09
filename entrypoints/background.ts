@@ -1,8 +1,10 @@
 import { browser } from "wxt/browser";
 import { isCopyRequest, type CopyResult } from "../lib/copy-protocol";
 import { copyTab } from "../lib/copy-service";
+import { registerTranslationBackground } from "../features/translate/background";
 
 export default defineBackground(() => {
+  registerTranslationBackground();
   browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
     if (
       sender.id !== browser.runtime.id ||

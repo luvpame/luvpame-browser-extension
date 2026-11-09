@@ -6,6 +6,7 @@
       "name": "luvpame-browser-extension",
       "dependencies": {
         "@replit/codemirror-vim": "6.4.0",
+        "@wllama/wllama": "3.13.0",
         "codemirror": "6.0.2",
         "defuddle": "0.18.1",
         "europa": "6.0.0",
@@ -254,6 +255,8 @@
     "@webext-core/isolated-element": ["@webext-core/isolated-element@3.0.0", "", { "dependencies": { "is-potential-custom-element-name": "^1.0.1" } }, "sha512-PmSIBMSe+rFw6eXzpJoV+glc1HPO40clcT9FJ7rSfCQzNewK8/nQZoBYWen2cMqdXdBNM9to/IbNNu5mdQLaPg=="],
 
     "@webext-core/match-patterns": ["@webext-core/match-patterns@2.0.0", "", {}, "sha512-EsyMMKfQuSE4rWCjP/TifwvUWlhC/OhiGn5OK3p9F0d57UmtLib0nzguzPKyxM1/kZV7SkE+jYXkE8gsdPRLmw=="],
+
+    "@wllama/wllama": ["@wllama/wllama@3.13.0", "", {}, "sha512-ZvoRdQAn+E+18EvQ9qS036gudiI9rbZRBJgG/qNICPPwrA0Y6SMMdbziz/j7K/0WxcbJlhaRraVIYsnEy732NA=="],
 
     "@wxt-dev/browser": ["@wxt-dev/browser@0.3.0", "", { "dependencies": { "@types/filesystem": "*", "@types/har-format": "*" } }, "sha512-GlqW+uqJP8s/pwqfR1buA2DckxC/mttCudDKBmop5iCerTtPZ6emd9bOAEpUdp3yIVdQCBfHT6iIRKPZsqddjw=="],
 

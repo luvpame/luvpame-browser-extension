@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 const api = vi.hoisted(() => ({
   storage: { local: { get: vi.fn() } },
   tabs: { get: vi.fn(), sendMessage: vi.fn() },
-  offscreen: { hasDocument: vi.fn(), createDocument: vi.fn(), Reason: { CLIPBOARD: "CLIPBOARD" } },
+  offscreen: {
+    hasDocument: vi.fn(),
+    createDocument: vi.fn(),
+    Reason: { CLIPBOARD: "CLIPBOARD", WORKERS: "WORKERS" },
+  },
   runtime: { sendMessage: vi.fn() },
   scripting: { executeScript: vi.fn() },
 }));

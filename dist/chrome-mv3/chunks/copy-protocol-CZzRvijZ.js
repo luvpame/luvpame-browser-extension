@@ -1,0 +1,1 @@
+var e=`luvpame:copy`,t=e=>typeof e==`object`&&!!e,n=e=>t(e)&&e.type===`luvpame:offscreen-copy`&&typeof e.requestId==`string`&&(e.mode===`text`||e.mode===`html`)&&typeof e.text==`string`&&typeof e.url==`string`,r=e=>e instanceof Error?e.message:String(e);export{t as i,r as n,n as r,e as t};

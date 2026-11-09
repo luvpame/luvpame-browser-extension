@@ -1,6 +1,7 @@
 import { browser } from "wxt/browser";
 import { readFeatures } from "./features";
 import { buildMarkdownLink } from "./markdown-link";
+import { ensureOffscreen } from "./offscreen";
 import {
   type CopyKind,
   type CopyResult,
@@ -11,23 +12,6 @@ import {
   isRecord,
   errorText,
 } from "./copy-protocol";
-
-let creating: Promise<void> | undefined;
-const ensureOffscreen = async () => {
-  if (!creating) {
-    creating = (async () => {
-      if (!(await browser.offscreen.hasDocument()))
-        await browser.offscreen.createDocument({
-          url: "offscreen.html",
-          reasons: [browser.offscreen.Reason.CLIPBOARD],
-          justification: "Markdownをクリップボードへコピーします。",
-        });
-    })().finally(() => {
-      creating = undefined;
-    });
-  }
-  await creating;
-};
 
 export const copyTab = async (tabId: number, kind: CopyKind): Promise<CopyResult> => {
   try {

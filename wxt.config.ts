@@ -1,4 +1,5 @@
 import { defineConfig } from "wxt";
+import { createTranslationRuntimePlugin } from "./scripts/translation-runtime";
 export default defineConfig({
   outDir: "dist",
   manifestVersion: 3,
@@ -6,6 +7,14 @@ export default defineConfig({
   manifest: {
     name: "Luvpame Browser Extension",
     description: "GitHub・Notionの編集補助、Vim入力、Markdownコピーを一つに。",
+    minimum_chrome_version: "137",
+    side_panel: { default_path: "sidepanel.html" },
+    content_security_policy: {
+      extension_pages:
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self';",
+    },
+    cross_origin_embedder_policy: { value: "require-corp" },
+    cross_origin_opener_policy: { value: "same-origin" },
     permissions: [
       "storage",
       "activeTab",
@@ -13,10 +22,16 @@ export default defineConfig({
       "clipboardWrite",
       "notifications",
       "offscreen",
+      "contextMenus",
+      "sidePanel",
     ],
-    host_permissions: ["https://github.com/*"],
+    host_permissions: ["https://github.com/*", "https://huggingface.co/*", "https://*.hf.co/*"],
     icons: { 16: "icon/16.png", 32: "icon/32.png", 48: "icon/48.png", 128: "icon/128.png" },
     commands: {
+      "toggle-page-translation": {
+        suggested_key: { default: "Alt+A", mac: "Alt+A" },
+        description: "原文下の日本語訳を開始／解除",
+      },
       "copy-markdown-link": {
         suggested_key: { default: "Ctrl+Shift+Y", mac: "Command+Shift+Y" },
         description: "現在のタブのURLをMarkdownでコピー",
@@ -29,6 +44,7 @@ export default defineConfig({
   vite: () => ({
     build: { modulePreload: false, target: "es2020" },
     plugins: [
+      createTranslationRuntimePlugin(),
       {
         name: "escape-unicode-noncharacters",
         generateBundle(_options, bundle) {

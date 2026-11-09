@@ -4,6 +4,7 @@ import { browser } from "wxt/browser";
 import { watchFeatures, type Features } from "../../lib/features";
 import { COPY_REQUEST, type CopyKind, isRecord, errorText } from "../../lib/copy-protocol";
 import { FeatureToggles } from "../../lib/feature-toggles";
+import { PAGE_TRANSLATION } from "../../features/translate/shared";
 import "../../lib/ui.css";
 
 function Popup() {
@@ -44,6 +45,24 @@ function Popup() {
       setBusy(false);
     }
   };
+  const toggleTranslation = async () => {
+    if (tabId === undefined || busy) return;
+    setBusy(true);
+    try {
+      const result: unknown = await browser.tabs.sendMessage(tabId, { type: PAGE_TRANSLATION });
+      if (!isRecord(result) || result.ok !== true)
+        throw new Error(
+          isRecord(result) && typeof result.error === "string"
+            ? result.error
+            : "翻訳を開始できません。ページを再読み込みしてください。",
+        );
+      setStatus("原文下の翻訳表示を切り替えました。");
+    } catch (error) {
+      setStatus(errorText(error));
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <main className="popup">
       <header className="popup-header">
@@ -68,6 +87,23 @@ function Popup() {
           onClick={() => void copy("body")}
         >
           本文をMarkdownでコピー{features?.bodyCopyEnabled === false ? "（OFF）" : ""}
+        </button>
+      </div>
+      <div className="popup-actions">
+        <button
+          disabled={busy || tabId === undefined || !features?.translationEnabled}
+          onClick={() => void toggleTranslation()}
+        >
+          原文下の日本語訳を開始／解除（Option+A）
+        </button>
+        <button
+          disabled={tabId === undefined || !features?.translationEnabled}
+          onClick={() => {
+            if (tabId !== undefined)
+              void browser.sidePanel.open({ tabId }).catch((error) => setStatus(errorText(error)));
+          }}
+        >
+          本文をやさしい日本語で読む
         </button>
       </div>
       <p role="status">{status}</p>

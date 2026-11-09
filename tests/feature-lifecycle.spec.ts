@@ -11,8 +11,8 @@ beforeEach(() => {
   document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
-it("normalizes all twelve feature values without accepting string booleans", () => {
-  expect(featureKeys).toHaveLength(12);
+it("normalizes all thirteen feature values without accepting string booleans", () => {
+  expect(featureKeys).toHaveLength(13);
   expect(Object.values(normalizeFeatures({})).every(Boolean)).toBe(true);
   expect(normalizeFeatures({ vimEnabled: false, lgtmEnabled: "false" })).toMatchObject({
     vimEnabled: false,
