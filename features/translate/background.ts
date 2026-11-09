@@ -113,32 +113,51 @@ export const registerTranslationBackground = (): void => {
       })
       .catch(console.error);
   });
-  const installMenus = async () => {
-    const { translationEnabled: enabled } = await readFeatures();
-    await browser.contextMenus.removeAll();
-    browser.contextMenus.create({
-      id: PAGE_TRANSLATION,
-      title: "原文下の日本語訳を開始／解除（Option+A）",
-      contexts: ["page", "selection", "link"],
-      documentUrlPatterns: ["http://*/*", "https://*/*"],
-      enabled,
-    });
-    browser.contextMenus.create({
-      id: "luvpame:easy-article",
-      title: "本文をやさしい日本語で読む",
-      contexts: ["page", "selection", "link"],
-      documentUrlPatterns: ["http://*/*", "https://*/*"],
-      enabled,
-    });
+  let menuSync = Promise.resolve();
+  const syncMenus = () => {
+    menuSync = menuSync
+      .then(async () => {
+        const { translationEnabled: enabled } = await readFeatures();
+        const menus = [
+          {
+            id: PAGE_TRANSLATION,
+            title: "原文下の日本語訳を開始／解除（Option+A）",
+            contexts: ["all"],
+            documentUrlPatterns: ["http://*/*", "https://*/*"],
+            enabled,
+          },
+          {
+            id: "luvpame:easy-article",
+            title: "本文をやさしい日本語で読む",
+            contexts: ["all"],
+            documentUrlPatterns: ["http://*/*", "https://*/*"],
+            enabled,
+          },
+        ] satisfies Parameters<typeof browser.contextMenus.create>[0][];
+        for (const { id, ...properties } of menus) {
+          try {
+            await browser.contextMenus.update(id, properties);
+          } catch (error) {
+            if (!errorText(error).startsWith("Cannot find menu item with id")) throw error;
+            await new Promise<void>((resolve, reject) => {
+              browser.contextMenus.create({ id, ...properties }, () => {
+                const error = browser.runtime.lastError;
+                if (error) reject(new Error(error.message));
+                else resolve();
+              });
+            });
+          }
+        }
+      })
+      .catch(console.error);
   };
-  browser.runtime.onInstalled.addListener(() => void installMenus().catch(console.error));
-  browser.runtime.onStartup.addListener(() => void installMenus().catch(console.error));
+  browser.runtime.onInstalled.addListener(syncMenus);
+  browser.runtime.onStartup.addListener(syncMenus);
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !("translationEnabled" in changes)) return;
-    const enabled = changes.translationEnabled?.newValue !== false;
-    for (const id of [PAGE_TRANSLATION, "luvpame:easy-article"])
-      void browser.contextMenus.update(id, { enabled }).catch(() => {});
+    syncMenus();
   });
+  syncMenus();
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (tab?.id === undefined) return;
     if (info.menuItemId === PAGE_TRANSLATION) void toggle(tab.id);

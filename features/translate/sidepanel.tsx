@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import "./sidepanel.css";
+import "./loading.css";
 import { browser } from "wxt/browser";
 import { watchFeatures } from "../../lib/features";
 import { isRecord, errorText } from "../../lib/copy-protocol";
@@ -140,7 +141,7 @@ export function Sidepanel() {
         const parts: string[] = [];
         for (const chunk of splitTranslationText(text)) {
           if (disposed) return;
-          setStatus(`やさしい日本語に翻訳しています… ${index + 1}/${texts.length}`);
+          setStatus(`やさしい日本語に訳しています… ${index + 1}/${texts.length}`);
           const result: unknown = await browser.runtime.sendMessage({
             type: TRANSLATE,
             text: chunk,
@@ -169,6 +170,7 @@ export function Sidepanel() {
       browser.runtime.onMessage.removeListener(onProgress);
     };
   }, [enabled, page, attempt, articleError]);
+  const busy = Boolean(enabled && page && !failed && paragraphs.length < page.paragraphs.length);
   return (
     <main className="reading-pane">
       <header className="reading-header">
@@ -181,7 +183,10 @@ export function Sidepanel() {
         <p className="hint">初回はモデルのダウンロードに時間がかかります。</p>
       </header>
       <div className="reading-status" data-failed={failed}>
-        <p role="status">{status}</p>
+        <p role="status" aria-busy={busy}>
+          <span className="translation-spinner" aria-hidden="true" />
+          <span>{status}</span>
+        </p>
         {cpu && <p className="hint">CPUで翻訳しています。完了まで時間がかかる場合があります。</p>}
         {failed && <button onClick={() => setAttempt((value) => value + 1)}>再試行</button>}
       </div>

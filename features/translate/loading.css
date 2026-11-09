@@ -1,0 +1,30 @@
+.translation-spinner {
+  display: none;
+  box-sizing: border-box;
+  width: 12px;
+  height: 12px;
+  margin-inline-end: 8px;
+  border: 1.5px solid color-mix(in srgb, currentColor 20%, transparent);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+
+:host([aria-busy="true"]) > .translation-spinner,
+[aria-busy="true"] > .translation-spinner {
+  display: inline-block;
+  animation: translation-spin 700ms linear infinite;
+}
+
+@keyframes translation-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :host([aria-busy="true"]) > .translation-spinner,
+  [aria-busy="true"] > .translation-spinner {
+    animation: none;
+  }
+}

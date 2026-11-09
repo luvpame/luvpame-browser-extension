@@ -3,12 +3,14 @@ import type {
   RawCompletionParams,
   RawCompletionChunk,
   WllamaConfig,
+  Wllama,
 } from "@wllama/wllama";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type CompletionOptions = RawCompletionParams & { onData: (chunk: RawCompletionChunk) => void };
+type ModelLoadOptions = NonNullable<Parameters<Wllama["loadModelFromUrl"]>[1]>;
 const mocks = vi.hoisted(() => ({
-  load: vi.fn<(url: string, params: LoadModelParams) => Promise<void>>(),
+  load: vi.fn<(url: string, params: ModelLoadOptions) => Promise<void>>(),
   complete: vi.fn(),
   exit: vi.fn(),
   setCompat: vi.fn(),
@@ -105,7 +107,7 @@ describe("translate", () => {
           "<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja-easy<|plamo:msg|>",
       }),
     );
-    expect(opts.onProgress).toHaveBeenCalledWith("GPU で翻訳中…");
+    expect(opts.onProgress).toHaveBeenCalledWith("やさしい日本語に訳しています…");
   });
 
   it("serializes requests, reuses the selected model, and unloads before switching", async () => {
@@ -141,10 +143,12 @@ describe("translate", () => {
         ?.logger?.error("ggml_webgpu: Failed to get a device: unavailable");
       throw new Error("GPU unavailable");
     });
-    expect(await translate("Hello", "ja", "2b", options())).toEqual({
+    const opts = options();
+    expect(await translate("Hello", "ja", "2b", opts)).toEqual({
       text: "翻訳結果",
       device: "cpu",
     });
+    expect(opts.onProgress).toHaveBeenCalledWith("翻訳の準備を続けています…");
     expect(
       mocks.load.mock.calls.map(([url, params]: [string, LoadModelParams]) => [
         url,
@@ -205,9 +209,24 @@ describe("translate", () => {
     });
     const opts = options();
     expect(await translate("Hello", "ja", "2b", opts)).toEqual({ text: "翻訳結果", device });
-    expect(opts.onProgress).toHaveBeenCalledWith(`${device.toUpperCase()} で翻訳中…`);
+    expect(opts.onProgress).toHaveBeenCalledWith("日本語に訳しています…");
     expect(mocks.load).toHaveBeenCalledTimes(1);
     expect(mocks.exit).not.toHaveBeenCalled();
+  });
+
+  it("shows model preparation and download progress without hardware or model IDs", async () => {
+    const { translate } = await import("./engine");
+    mocks.load.mockImplementationOnce(async (_url, params) => {
+      params.progressCallback?.({ loaded: 32, total: 100 });
+    });
+    const opts = options();
+    await translate("Hello", "ja", "2b", opts);
+    expect(opts.onProgress.mock.calls.map(([message]) => message)).toEqual([
+      "翻訳の順番を待っています…",
+      "翻訳の準備をしています…",
+      "翻訳モデルをダウンロードしています… 32%",
+      "日本語に訳しています…",
+    ]);
   });
 
   it("rejects queued cancellation promptly and leaves subsequent work usable", async () => {

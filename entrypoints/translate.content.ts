@@ -14,20 +14,51 @@ export default defineContentScript({
   main(ctx) {
     const controller = createTranslationController();
     let enabled = false;
-    const stop = watchFeatures((settings) => {
-      enabled = settings.translationEnabled;
-      controller.setEnabled(enabled);
+    const ready = new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
+      const stop = watchFeatures(
+        (settings) => {
+          enabled = settings.translationEnabled;
+          controller.setEnabled(enabled);
+          resolve({ ok: true });
+        },
+        (error) =>
+          resolve({
+            ok: false,
+            error: error instanceof Error ? error.message : "設定を読み込めませんでした。",
+          }),
+      );
+      ctx.onInvalidated(stop);
     });
-    const onMessage = (message: unknown, sender: { id?: string; tab?: unknown }) => {
+    const onMessage = (
+      message: unknown,
+      sender: { id?: string; tab?: unknown },
+      respond: (response: unknown) => void,
+    ) => {
       if (sender.id !== browser.runtime.id || sender.tab || !isRecord(message)) return;
-      if (message.type === PAGE_TRANSLATION) return Promise.resolve(controller.toggle());
-      if (message.type === ARTICLE_REQUEST)
-        return enabled
-          ? extractArticle().catch((error: unknown) => ({
+      if (message.type === PAGE_TRANSLATION || message.type === ARTICLE_REQUEST) {
+        void ready.then((result) => {
+          if (ctx.isInvalid) return;
+          if (!result.ok) {
+            respond(result);
+            return;
+          }
+          if (message.type === PAGE_TRANSLATION) {
+            respond(controller.toggle());
+            return;
+          }
+          if (!enabled) {
+            respond({ ok: false, error: "翻訳はOFFです。" });
+            return;
+          }
+          void extractArticle().then(respond, (error: unknown) =>
+            respond({
               ok: false,
               error: error instanceof Error ? error.message : "本文を取得できませんでした。",
-            }))
-          : Promise.resolve({ ok: false, error: "翻訳はOFFです。" });
+            }),
+          );
+        });
+        return true;
+      }
       if (
         message.type === TRANSLATION_PROGRESS &&
         typeof message.sessionId === "string" &&
@@ -39,7 +70,6 @@ export default defineContentScript({
     ctx.addEventListener(window, "wxt:locationchange", () => controller.reset());
     ctx.addEventListener(window, "pagehide", () => controller.reset());
     ctx.onInvalidated(() => {
-      stop();
       controller.dispose();
       browser.runtime.onMessage.removeListener(onMessage);
     });

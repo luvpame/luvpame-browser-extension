@@ -73,7 +73,7 @@ async function loadModel(
       worker: new URL("vendor/wllama-compat-worker.js", browser.runtime.getURL("/")).href,
       wasm: new URL("vendor/wllama-compat.wasm", browser.runtime.getURL("/")).href,
     });
-    options.onProgress(`${device === "gpu" ? "GPU" : "CPU"} で PLaMo ${model} を準備中…`);
+    options.onProgress("翻訳の準備をしています…");
     try {
       await runtime.loadModelFromUrl(modelUrl(model), {
         n_ctx: 4096,
@@ -87,7 +87,7 @@ async function loadModel(
           if (!options.signal.aborted) {
             const percent =
               total > 0 ? ` ${Math.min(100, Math.floor((loaded / total) * 100))}%` : "";
-            options.onProgress(`PLaMo ${model} ダウンロード${percent}（${device.toUpperCase()}）`);
+            options.onProgress(`翻訳モデルをダウンロードしています…${percent}`);
           }
         },
       });
@@ -98,7 +98,7 @@ async function loadModel(
       await runtime.exit();
       options.signal.throwIfAborted();
       if (device === "cpu") throw error;
-      options.onProgress("GPU を利用できないため、同じモデルを CPU で読み込みます…");
+      options.onProgress("翻訳の準備を続けています…");
       device = "cpu";
     } finally {
       collectingLogs = false;
@@ -115,7 +115,9 @@ async function runTranslation(
   options.signal.throwIfAborted();
   const loaded = await loadModel(model, options);
   options.signal.throwIfAborted();
-  options.onProgress(`${loaded.device.toUpperCase()} で翻訳中…`);
+  options.onProgress(
+    target === "ja-easy" ? "やさしい日本語に訳しています…" : "日本語に訳しています…",
+  );
   const safeText = text.replaceAll("<|", "<\u200b|");
   const prompt =
     "<|plamo:tag|>dataset<|plamo:msg|>translation" +

@@ -88,6 +88,7 @@ it("translates every article paragraph into easy Japanese when the active tab ex
   expect(container.querySelector('[role="status"]')?.textContent).toBe(
     "記事全体の翻訳が完了しました。",
   );
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("false");
   for (const text of article.paragraphs)
     expect(send).toHaveBeenCalledWith(
       expect.objectContaining({ type: TRANSLATE, target: "ja-easy", text }),
@@ -129,16 +130,55 @@ it("clears visible translations and cancels pending work when translation is dis
     });
   await act(async () => root.render(<Sidepanel />));
   expect(container.querySelector("article")?.textContent).toBe("最初の訳");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("true");
 
   await act(async () => onSettingsChanged({ translationEnabled: { newValue: false } }, "local"));
   expect(container.querySelector("article")?.textContent).toBe("");
   expect(container.textContent).toContain("翻訳は共通設定でOFFになっています。");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("false");
   expect(send).toHaveBeenCalledWith({
     type: CANCEL_TRANSLATION,
     sessionId,
   });
   await act(async () => finish({ ok: true, text: "遅れて届いた訳", device: "gpu" }));
   expect(container.querySelector("article")?.textContent).toBe("");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("false");
+});
+
+it.each([
+  { ok: true, text: "翻訳した記事", device: "gpu" },
+  { ok: false, error: "翻訳に失敗しました。" },
+] satisfies TranslationResult[])(
+  "keeps the article busy until the translation settles (%#)",
+  async (result) => {
+    article = { ...article, paragraphs: ["One paragraph."] };
+    let finish: ((response: TranslationResult) => void) | undefined;
+    vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async (message: unknown) => {
+      if (!isTranslationRequest(message)) return { ok: true };
+      return new Promise<TranslationResult>((resolve) => {
+        finish = resolve;
+      });
+    });
+    await act(async () => root.render(<Sidepanel />));
+    const status = container.querySelector('[role="status"]');
+    const spinner = status?.querySelector(".translation-spinner");
+    expect(status?.getAttribute("aria-busy")).toBe("true");
+    expect(status?.textContent).toBe("やさしい日本語に訳しています… 1/1");
+    await act(async () => finish?.(result));
+    expect(status?.getAttribute("aria-busy")).toBe("false");
+    expect(status?.querySelector(".translation-spinner")).toBe(spinner);
+    expect(status?.textContent).toBe(result.ok ? "記事全体の翻訳が完了しました。" : result.error);
+  },
+);
+
+it("does not stay busy when the article has no paragraphs", async () => {
+  article = { ...article, paragraphs: [] };
+  vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async () => ({ ok: true }));
+  await act(async () => root.render(<Sidepanel />));
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("false");
+  expect(container.querySelector('[role="status"]')?.textContent).toBe(
+    "読み取れる本文がありません。",
+  );
 });
 
 it("ignores a cancelled tab's late response after switching to another article", async () => {

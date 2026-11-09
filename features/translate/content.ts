@@ -1,15 +1,17 @@
 import { browser } from "wxt/browser";
+import loadingCss from "./loading.css?inline";
 import { CANCEL_TRANSLATION, TRANSLATE, isTranslationResult } from "./shared";
 
 const OWN = "data-luvpame-translation";
 const EXCLUDED = `script,style,noscript,code,pre,input,textarea,select,button,svg,canvas,iframe,nav,footer,aside,[contenteditable]:not([contenteditable="false"]),[role="navigation"],[role="menu"],[role="textbox"],[role="banner"],[role="complementary"],[hidden],[aria-hidden="true"],[${OWN}]`;
+const PAGE_EXCLUDED = `${EXCLUDED},header,figure,label,.not-prose,.notranslate,.sr-only:not(.not-sr-only),.visually-hidden:not(.not-visually-hidden),.screen-reader-only,[translate="no"],[role="img"],[role="application"],[role="dialog"],[role="toolbar"]`;
 const BLOCKS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div";
 const english = (text: string) => /[A-Za-z]{2,}/.test(text);
 const sourceText = (element: Element) => {
-  if (!element.querySelector(EXCLUDED)) return element.textContent?.trim() ?? "";
+  if (!element.querySelector(PAGE_EXCLUDED)) return element.textContent?.trim() ?? "";
   const copy = element.cloneNode(true);
   if (!(copy instanceof Element)) return "";
-  copy.querySelectorAll(EXCLUDED).forEach((node) => node.remove());
+  copy.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
   return copy.textContent?.trim() ?? "";
 };
 
@@ -34,11 +36,30 @@ export function splitTranslationText(text: string): string[] {
   return chunks;
 }
 
-function paragraphs(root: ParentNode): Element[] {
-  return Array.from(root.querySelectorAll(BLOCKS)).filter(
+function articleRoots(doc: Document): Element[] {
+  for (const selector of [
+    '[itemprop~="articleBody"]',
+    'main article,[role="main"] article',
+    'main,[role="main"]',
+    "article",
+  ]) {
+    const roots = Array.from(doc.querySelectorAll(selector)).filter(
+      (element) => !element.closest(PAGE_EXCLUDED),
+    );
+    if (roots.length)
+      return roots.filter((root) => !roots.some((other) => other !== root && other.contains(root)));
+  }
+  return [doc.body];
+}
+
+function paragraphs(root: Element): Element[] {
+  return [root, ...root.querySelectorAll(BLOCKS)].filter(
     (element) =>
-      !element.closest(EXCLUDED) &&
-      !Array.from(element.querySelectorAll(BLOCKS)).some((child) => !child.closest(EXCLUDED)) &&
+      element.matches(BLOCKS) &&
+      !element.closest(PAGE_EXCLUDED) &&
+      !Array.from(element.querySelectorAll(BLOCKS)).some(
+        (child) => !child.closest(PAGE_EXCLUDED),
+      ) &&
       sourceText(element).length > 0,
   );
 }
@@ -50,10 +71,12 @@ export async function extractArticle(
 > {
   const { default: Defuddle } = await import("defuddle/full");
   const copy = new DOMParser().parseFromString(doc.documentElement.outerHTML, "text/html");
-  copy.querySelectorAll(EXCLUDED).forEach((node) => node.remove());
+  const roots = articleRoots(copy);
+  if (!roots.includes(copy.body)) copy.body.replaceChildren(...roots);
+  copy.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
   const result = new Defuddle(copy, { url: doc.location.href }).parse();
   const article = new DOMParser().parseFromString(result.content, "text/html");
-  article.querySelectorAll(EXCLUDED).forEach((node) => node.remove());
+  article.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
   const texts: string[] = [];
   const walker = article.createTreeWalker(article.body, NodeFilter.SHOW_TEXT);
   let previousBlock: Element | null = null;
@@ -61,7 +84,7 @@ export async function extractArticle(
   while (walker.nextNode()) {
     const node = walker.currentNode;
     const parent = node.parentElement;
-    if (!parent || parent.closest(EXCLUDED)) continue;
+    if (!parent || parent.closest(PAGE_EXCLUDED)) continue;
     const block = parent.closest(BLOCKS) ?? article.body;
     if (block !== previousBlock && paragraph.trim()) {
       texts.push(paragraph.trim());
@@ -94,7 +117,7 @@ export function createTranslationController({
   let active = false;
   let generation = 0;
   let sessionId = "";
-  let running = false;
+  let runningGeneration: number | undefined;
   const entries = new Map<Element, Entry>();
   let selectionSession = "";
   let selectionText = "";
@@ -116,28 +139,49 @@ export function createTranslationController({
     }
     return parts.join("\n");
   };
-  const createOutput = (text: string) => {
+  const createOutput = (element: Element, text: string) => {
     const host = doc.createElement("div");
     host.setAttribute(OWN, "");
+    host.setAttribute("aria-busy", "false");
+    host.style.cssText =
+      "all:initial;display:block;color:inherit;margin:0.35em 0 0.75em;padding:8px 12px;background:color-mix(in srgb,currentColor 4%,transparent);border-inline-start:1px solid color-mix(in srgb,currentColor 22%,transparent);";
+    const original = win.getComputedStyle(element);
+    for (const property of [
+      "font-family",
+      "font-size",
+      "font-weight",
+      "font-style",
+      "line-height",
+      "letter-spacing",
+      "text-align",
+    ]) {
+      host.style.setProperty(property, original.getPropertyValue(property));
+    }
     const shadow = host.attachShadow({ mode: "open" });
+    const style = doc.createElement("style");
+    style.textContent = loadingCss;
+    const spinner = doc.createElement("span");
+    spinner.className = "translation-spinner";
+    spinner.setAttribute("aria-hidden", "true");
     const output = doc.createElement("div");
+    output.setAttribute("data-translation-text", "");
     output.lang = "ja";
-    output.style.cssText =
-      "color-scheme:light dark;box-sizing:border-box;font:16px/1.8 system-ui,sans-serif;color:light-dark(#29262b,#eee7eb);background:light-dark(#faf3f6,#2c2329);border:1px solid light-dark(#e8dce2,#51414a);border-left:3px solid light-dark(#a34869,#d991ae);border-radius:8px;padding:12px 16px;margin:8px 0 16px;box-shadow:0 2px 6px #00000006;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;";
+    output.style.cssText = "display:inline;white-space:pre-wrap;overflow-wrap:anywhere;";
     output.textContent = text;
-    shadow.append(output);
+    shadow.append(style, spinner, output);
     return { host, output };
   };
   const pump = async () => {
-    if (running || !active) return;
-    running = true;
+    if (runningGeneration === generation || !active) return;
     const epoch = generation;
+    runningGeneration = epoch;
     const id = sessionId;
     try {
       for (const [element, entry] of entries) {
         if (!active || epoch !== generation) break;
         if (entry.state !== "queued") continue;
         entry.state = "running";
+        entry.host.setAttribute("aria-busy", "true");
         const current = () =>
           active &&
           epoch === generation &&
@@ -153,17 +197,24 @@ export function createTranslationController({
               error instanceof Error ? error.message : "翻訳に失敗しました。";
         } finally {
           entry.state = "done";
+          entry.host.setAttribute("aria-busy", "false");
         }
       }
     } finally {
-      running = false;
-      if (active && Array.from(entries.values()).some((entry) => entry.state === "queued"))
-        void pump();
+      if (runningGeneration === epoch) {
+        runningGeneration = undefined;
+        if (active && Array.from(entries.values()).some((entry) => entry.state === "queued"))
+          void pump();
+      }
     }
   };
   const refresh = () => {
     if (!active) return;
-    const candidates = new Set(paragraphs(doc).filter((node) => english(sourceText(node))));
+    const candidates = new Set(
+      articleRoots(doc)
+        .flatMap(paragraphs)
+        .filter((node) => english(sourceText(node))),
+    );
     for (const [element, entry] of entries) {
       if (!candidates.has(element) || sourceText(element) !== entry.text) {
         entry.host.remove();
@@ -176,7 +227,7 @@ export function createTranslationController({
       if (entries.has(element)) continue;
       const entry: Entry = {
         text: sourceText(element),
-        ...createOutput("翻訳を待っています…"),
+        ...createOutput(element, "翻訳を待っています…"),
         state: "queued",
       };
       entries.set(element, entry);
@@ -219,13 +270,13 @@ export function createTranslationController({
       "all:initial;color-scheme:light dark;position:fixed;z-index:2147483647;max-width:calc(100vw - 16px);";
     const shadow = host.attachShadow({ mode: "open" });
     const style = doc.createElement("style");
-    style.textContent = `
+    style.textContent = `${loadingCss}
       :host {
         color-scheme: light dark;
-        --ink: light-dark(#29262b, #eee7eb);
-        --surface: light-dark(#fffafb, #2c2329);
-        --border: light-dark(#e8dce2, #51414a);
-        --accent: light-dark(#a34869, #d991ae);
+        --ink: light-dark(#262626, #eeeeee);
+        --surface: light-dark(#ffffff, #262626);
+        --border: light-dark(#e5e5e5, #525252);
+        --accent: light-dark(#525252, #d4d4d4);
       }
       button {
         box-sizing: border-box;
@@ -267,12 +318,13 @@ export function createTranslationController({
         font-weight: 500;
       }
       .text {
+        display: inline;
         white-space: pre-wrap;
         overflow-wrap: anywhere;
         text-align: left;
       }
       @media (hover: hover) and (pointer: fine) {
-        button:hover { background: light-dark(#faedf2, #3e2d36); }
+        button:hover { background: light-dark(#f5f5f5, #404040); }
         button:active:not(:focus-visible) { transform: scale(0.97); }
         @media (prefers-reduced-motion: no-preference) {
           button:not(:focus-visible) {
@@ -293,6 +345,7 @@ export function createTranslationController({
       panel.className = "panel";
       panel.setAttribute("role", "dialog");
       panel.setAttribute("aria-label", "選択した文章の翻訳");
+      panel.setAttribute("aria-busy", "true");
       const close = doc.createElement("button");
       close.type = "button";
       close.textContent = "閉じる";
@@ -301,8 +354,11 @@ export function createTranslationController({
       output.className = "text";
       output.lang = "ja";
       output.setAttribute("role", "status");
-      output.textContent = "翻訳しています…";
-      panel.append(close, output);
+      output.textContent = "日本語に訳しています…";
+      const spinner = doc.createElement("span");
+      spinner.className = "translation-spinner";
+      spinner.setAttribute("aria-hidden", "true");
+      panel.append(close, spinner, output);
       button.replaceWith(panel);
       close.focus();
       void translate(text, id, () => selectionSession === id)
@@ -312,6 +368,9 @@ export function createTranslationController({
         .catch((error) => {
           if (selectionSession === id)
             output.textContent = error instanceof Error ? error.message : "翻訳に失敗しました。";
+        })
+        .finally(() => {
+          if (selectionSession === id) panel.setAttribute("aria-busy", "false");
         });
     });
     shadow.append(style, button);
@@ -355,7 +414,15 @@ export function createTranslationController({
           childList: true,
           characterData: true,
           attributes: true,
-          attributeFilter: ["hidden", "aria-hidden", "contenteditable"],
+          attributeFilter: [
+            "hidden",
+            "aria-hidden",
+            "contenteditable",
+            "itemprop",
+            "role",
+            "translate",
+            "class",
+          ],
         });
         refresh();
       }
@@ -364,7 +431,7 @@ export function createTranslationController({
     progress(id: string, message: string) {
       if (id === sessionId)
         for (const entry of entries.values())
-          if (entry.state !== "done") entry.output.textContent = message;
+          if (entry.state === "running") entry.output.textContent = message;
       if (id === selectionSession) {
         const output = selectionHost?.shadowRoot?.querySelector('[role="status"]');
         if (output) output.textContent = message;

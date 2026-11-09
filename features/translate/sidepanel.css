@@ -47,21 +47,8 @@
 
 .reading-status [role="status"] {
   margin: 0;
-  padding-left: 16px;
-  position: relative;
   font-size: 14px;
   line-height: 1.8;
-}
-
-.reading-status [role="status"]::before {
-  content: "";
-  position: absolute;
-  top: 10px;
-  left: 0;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
 }
 
 .reading-status[data-failed="true"] {
@@ -69,7 +56,7 @@
 }
 
 .reading-status .hint {
-  margin: 10px 0 0 16px;
+  margin: 10px 0 0;
 }
 
 .reading-status button {
