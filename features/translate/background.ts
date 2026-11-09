@@ -2,7 +2,7 @@ import { browser } from "wxt/browser";
 import { errorText, isRecord } from "../../lib/copy-protocol";
 import { readFeatures } from "../../lib/features";
 import { ensureOffscreen } from "../../lib/offscreen";
-import { readTranslationModel } from "./settings";
+import { readTranslationSettings } from "./settings";
 import { sendPageTranslationMessage } from "./page-bridge";
 import {
   TRANSLATE,
@@ -14,21 +14,32 @@ import {
   isSessionId,
   isTranslationRequest,
   isTranslationResult,
+  isTranslationUpdate,
   type TranslationResult,
 } from "./shared";
 
 export const registerTranslationBackground = (): void => {
-  const sessions = new Map<string, { tabId?: number; localId: string; cancelled: boolean }>();
+  const sessions = new Map<
+    string,
+    { tabId?: number; localId: string; sessionId: string; requestId: string; cancelled: boolean }
+  >();
+  const routeKey = (sessionId: string, requestId: string) => JSON.stringify([sessionId, requestId]);
   browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
     if (sender.id !== browser.runtime.id || !isRecord(message)) return;
     if (message.type === TRANSLATION_PROGRESS && !sender.tab) {
-      const route =
-        typeof message.sessionId === "string" ? sessions.get(message.sessionId) : undefined;
-      if (!route || route.cancelled || typeof message.message !== "string") return;
+      if (
+        !isSessionId(message.sessionId) ||
+        !isSessionId(message.requestId) ||
+        !isTranslationUpdate(message.update)
+      )
+        return;
+      const route = sessions.get(routeKey(message.sessionId, message.requestId));
+      if (!route || route.cancelled) return;
       const progress = {
         type: TRANSLATION_PROGRESS,
         sessionId: route.localId,
-        message: message.message,
+        requestId: route.requestId,
+        update: message.update,
       };
       if (route.tabId !== undefined)
         void browser.tabs.sendMessage(route.tabId, progress).catch(() => {});
@@ -42,8 +53,8 @@ export const registerTranslationBackground = (): void => {
     if (!isSessionId(message.sessionId)) return;
     const sessionId = `${content ? `tab-${sender.tab?.id}` : "panel"}:${message.sessionId}`;
     if (message.type === CANCEL_TRANSLATION) {
-      const route = sessions.get(sessionId);
-      if (route) route.cancelled = true;
+      for (const route of sessions.values())
+        if (route.sessionId === sessionId) route.cancelled = true;
       void browser.offscreen
         .hasDocument()
         .then((exists) => {
@@ -61,23 +72,31 @@ export const registerTranslationBackground = (): void => {
     const route = {
       tabId: content ? sender.tab?.id : undefined,
       localId: message.sessionId,
+      sessionId,
+      requestId: message.requestId,
       cancelled: false,
     };
-    sessions.set(sessionId, route);
+    const key = routeKey(sessionId, message.requestId);
+    if (sessions.has(key)) {
+      respond({ ok: false, error: "同じ翻訳リクエストが処理中です。" });
+      return;
+    }
+    sessions.set(key, route);
     void (async (): Promise<TranslationResult> => {
       try {
         if (!(await readFeatures()).translationEnabled) throw new Error("翻訳機能はOFFです。");
-        const model = await readTranslationModel();
+        const provider = await readTranslationSettings();
         await ensureOffscreen();
         if (route.cancelled) throw new Error("翻訳を停止しました。");
-        const requestId = crypto.randomUUID();
+        const requestId = message.requestId;
         const result: unknown = await browser.runtime.sendMessage({
           type: OFFSCREEN_TRANSLATE,
           requestId,
           sessionId,
           text: message.text,
           target: message.target,
-          model,
+          provider,
+          priority: message.priority,
         });
         if (!isRecord(result) || result.requestId !== requestId || !isTranslationResult(result))
           throw new Error("翻訳の応答を受け取れませんでした。もう一度実行してください。");
@@ -85,7 +104,7 @@ export const registerTranslationBackground = (): void => {
       } catch (error) {
         return { ok: false, error: errorText(error) };
       } finally {
-        if (sessions.get(sessionId) === route) sessions.delete(sessionId);
+        if (sessions.get(key) === route) sessions.delete(key);
       }
     })().then(respond);
     return true;
@@ -183,10 +202,12 @@ export const registerTranslationBackground = (): void => {
       void browser.sidePanel.open({ tabId: tab.id }).catch(console.error);
   });
   browser.tabs.onRemoved.addListener((tabId) => {
-    for (const [sessionId, route] of sessions) {
+    for (const route of sessions.values()) {
       if (route.tabId !== tabId) continue;
       route.cancelled = true;
-      void browser.runtime.sendMessage({ type: OFFSCREEN_CANCEL, sessionId }).catch(() => {});
+      void browser.runtime
+        .sendMessage({ type: OFFSCREEN_CANCEL, sessionId: route.sessionId })
+        .catch(() => {});
     }
   });
 };

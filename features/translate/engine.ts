@@ -1,15 +1,22 @@
-import { Wllama } from "@wllama/wllama";
+import { Wllama, type RawCompletionParams, type RawCompletionChunk } from "@wllama/wllama";
 import { browser } from "wxt/browser";
-import type { TargetLanguage, TranslationDevice, TranslationModel } from "./shared";
+import type {
+  TargetLanguage,
+  TranslationDevice,
+  TranslationModel,
+  TranslationOptions,
+} from "./shared";
+import { translationPrompt, TRANSLATION_STOP } from "./prompt";
+import {
+  scheduleTranslation,
+  notifyTranslationReady,
+  translationCache,
+  translationCacheKey,
+} from "./scheduler";
 
-type TranslationOptions = {
-  signal: AbortSignal;
-  onProgress: (message: string) => void;
-};
 type LoadedModel = { runtime: Wllama; model: TranslationModel; device: TranslationDevice };
 
 let loadedModel: LoadedModel | undefined;
-let queue: Promise<unknown> = Promise.resolve();
 
 const modelUrl = (model: TranslationModel) =>
   `https://huggingface.co/pfnet/plamo-3-translate-${model}-GGUF/resolve/main/plamo-3-translate-${model}-Q4_K_M.gguf`;
@@ -76,8 +83,9 @@ async function loadModel(
     options.onProgress("翻訳の準備をしています…");
     try {
       await runtime.loadModelFromUrl(modelUrl(model), {
-        n_ctx: 4096,
-        n_parallel: 1,
+        n_ctx: device === "gpu" ? 8192 : 4096,
+        n_parallel: device === "gpu" ? 2 : 1,
+        kv_unified: false,
         n_gpu_layers: device === "gpu" ? 999 : 0,
         n_threads: Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 2) / 2))),
         cache_idle_slots: false,
@@ -114,38 +122,36 @@ async function runTranslation(
 ): Promise<{ text: string; device: TranslationDevice }> {
   options.signal.throwIfAborted();
   const loaded = await loadModel(model, options);
+  notifyTranslationReady();
   options.signal.throwIfAborted();
   options.onProgress(
     target === "ja-easy" ? "やさしい日本語に訳しています…" : "日本語に訳しています…",
   );
-  const safeText = text.replaceAll("<|", "<\u200b|");
-  const prompt =
-    "<|plamo:tag|>dataset<|plamo:msg|>translation" +
-    (target === "ja-easy"
-      ? "<|plamo:tag|>context<|plamo:msg|>読者は日本語学習者です。短い文と日常の言葉を使います。内容は省略・要約しません。"
-      : "") +
-    "<|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>" +
-    safeText +
-    "<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja" +
-    (target === "ja-easy" ? "<|plamo:key|>form<|plamo:val|>polite" : "") +
-    "<|plamo:msg|>";
+  const prompt = translationPrompt(text, target);
   let translated = "";
   let finishReason: string | null = null;
-  await loaded.runtime.createCompletion({
+  const completion = {
     prompt,
     max_tokens: 2048,
     temperature: 0,
-    stop: ["<|plamo:tag|>", "<|plamo:bos|>"],
+    cache_prompt: false,
+    stop: TRANSLATION_STOP,
     abortSignal: options.signal,
     stream: true,
-    onData: (chunk) => {
+    onData: (chunk: RawCompletionChunk) => {
       options.signal.throwIfAborted();
       for (const choice of chunk.choices) {
         translated += choice.text;
         if (choice.finish_reason) finishReason = choice.finish_reason;
       }
+      options.onText?.(translated);
     },
-  });
+  } satisfies RawCompletionParams & {
+    stream: true;
+    cache_prompt: boolean;
+    onData: (chunk: RawCompletionChunk) => void;
+  };
+  await loaded.runtime.createCompletion(completion);
   options.signal.throwIfAborted();
   if (finishReason !== "stop") {
     throw new Error("翻訳が最後まで完了しませんでした。文章を短くして再試行してください。");
@@ -160,14 +166,21 @@ export async function translate(
   model: TranslationModel,
   options: TranslationOptions,
 ): Promise<{ text: string; device: TranslationDevice }> {
-  options.signal.throwIfAborted();
-  options.onProgress("翻訳の順番を待っています…");
-  const work = queue.then(() => runTranslation(text, target, model, options));
-  queue = work.catch(() => {});
-  return new Promise((resolve, reject) => {
-    const onAbort = () => reject(options.signal.reason);
-    options.signal.addEventListener("abort", onAbort, { once: true });
-    work.then(resolve, reject).finally(() => options.signal.removeEventListener("abort", onAbort));
-    if (options.signal.aborted) onAbort();
-  });
+  const key = translationCacheKey({ kind: "browser", model }, target, text);
+  return scheduleTranslation(
+    options,
+    async () => {
+      const cached = translationCache.get(key);
+      if (cached && (cached.device === "gpu" || cached.device === "cpu"))
+        return { text: cached.text, device: cached.device };
+      const result = await runTranslation(text, target, model, options);
+      options.signal.throwIfAborted();
+      translationCache.set(key, result);
+      return result;
+    },
+    {
+      group: `browser:${model}`,
+      capacity: () => (loadedModel?.model === model && loadedModel.device === "gpu" ? 2 : 1),
+    },
+  );
 }

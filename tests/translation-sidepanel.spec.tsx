@@ -267,3 +267,47 @@ it("extracts and translates the current article after the feature is enabled", a
   expect(container.querySelectorAll("article p")).toHaveLength(2);
   expect(container.querySelector("article")?.textContent).toContain("有効化後の訳");
 });
+
+it("shows partial paragraphs without marking them complete and rejects stale chunk updates", async () => {
+  article = { ...article, paragraphs: ["Hello world. ".repeat(150)] };
+  let progress: Parameters<typeof browser.runtime.onMessage.addListener>[0] | undefined;
+  vi.spyOn(browser.runtime.onMessage, "addListener").mockImplementation((listener) => {
+    progress = listener;
+  });
+  const requests: {
+    sessionId: string;
+    requestId: string;
+    finish: (value: TranslationResult) => void;
+  }[] = [];
+  vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async (message: unknown) => {
+    if (!isTranslationRequest(message)) return { ok: true };
+    return new Promise<TranslationResult>((finish) =>
+      requests.push({ sessionId: message.sessionId, requestId: message.requestId, finish }),
+    );
+  });
+  await act(async () => root.render(<Sidepanel />));
+  const emit = (request: { sessionId: string; requestId: string }, text: string) =>
+    progress?.(
+      { type: "luvpame:translation-progress", ...request, update: { kind: "text", text } },
+      { id: browser.runtime.id },
+      vi.fn(),
+    );
+  await act(async () => {
+    emit(requests[0]!, "途中の訳");
+  });
+  expect(container.querySelector("article")?.textContent).toBe("途中の訳");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("true");
+  await act(async () => requests[0]?.finish({ ok: true, text: "確定した前半", device: "gpu" }));
+  await act(async () => {
+    emit(requests[1]!, "後半の途中");
+    emit(requests[0]!, "古い前半");
+  });
+  expect(container.querySelector("article")?.textContent).toBe("確定した前半\n後半の途中");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("true");
+  await act(async () => requests[1]?.finish({ ok: true, text: "確定した後半", device: "gpu" }));
+  await act(async () => {
+    emit(requests[1]!, "完了後の遅延");
+  });
+  expect(container.querySelector("article")?.textContent).toBe("確定した前半\n確定した後半");
+  expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("false");
+});

@@ -242,13 +242,21 @@ it("forwards valid progress without replying", () => {
   const respond = vi.fn();
   expect(
     listener(
-      { type: TRANSLATION_PROGRESS, sessionId: "session-1", message: "Loading" },
+      {
+        type: TRANSLATION_PROGRESS,
+        sessionId: "session-1",
+        requestId: "request-1",
+        update: { kind: "status", message: "Loading" },
+      },
       sender,
       respond,
     ),
   ).toBeUndefined();
   listener({ type: TRANSLATION_PROGRESS, sessionId: 42, message: "Loading" }, sender, respond);
-  expect(controller.progress).toHaveBeenCalledExactlyOnceWith("session-1", "Loading");
+  expect(controller.progress).toHaveBeenCalledExactlyOnceWith("session-1", "request-1", {
+    kind: "status",
+    message: "Loading",
+  });
   expect(respond).not.toHaveBeenCalled();
 });
 

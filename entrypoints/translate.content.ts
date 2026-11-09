@@ -8,6 +8,7 @@ import {
   PAGE_TRANSLATION,
   TRANSLATION_PROGRESS,
   TRANSLATION_READY,
+  isTranslationUpdate,
 } from "../features/translate/shared";
 
 export default defineContentScript({
@@ -67,9 +68,10 @@ export default defineContentScript({
       if (
         message.type === TRANSLATION_PROGRESS &&
         typeof message.sessionId === "string" &&
-        typeof message.message === "string"
+        typeof message.requestId === "string" &&
+        isTranslationUpdate(message.update)
       )
-        controller.progress(message.sessionId, message.message);
+        controller.progress(message.sessionId, message.requestId, message.update);
     };
     browser.runtime.onMessage.addListener(onMessage);
     ctx.addEventListener(window, "wxt:locationchange", () => controller.reset());

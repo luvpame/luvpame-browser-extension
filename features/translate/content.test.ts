@@ -217,7 +217,7 @@ describe("ページ翻訳", () => {
     expect(output()).toEqual(["再開した翻訳"]);
   });
 
-  it("停止した要求が完了しても再開中の段落を重複送信せず、次の段落を順番に翻訳する", async () => {
+  it("停止した要求が完了しても再開中の2段落を重複送信しない", async () => {
     document.body.innerHTML = "<p>First paragraph.</p><p>Second paragraph.</p>";
     const pending: ((value: unknown) => void)[] = [];
     const send = vi.fn((message: unknown) => {
@@ -228,18 +228,18 @@ describe("ページ翻訳", () => {
     controller.toggle();
     controller.toggle();
     controller.toggle();
-    expect(pending).toHaveLength(2);
+    expect(pending).toHaveLength(4);
     pending[0]!(success("停止した翻訳"));
+    pending[1]!(success("停止した2番目の翻訳"));
     await tick();
-    expect(pending).toHaveLength(2);
-    expect(document.querySelector("[data-luvpame-translation]")?.getAttribute("aria-busy")).toBe(
-      "true",
-    );
-    pending[1]!(success("最初の段落"));
-    await tick();
-    expect(pending).toHaveLength(3);
-    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ text: "Second paragraph." }));
-    pending[2]!(success("次の段落"));
+    expect(pending).toHaveLength(4);
+    expect(
+      [...document.querySelectorAll("[data-luvpame-translation]")].map((host) =>
+        host.getAttribute("aria-busy"),
+      ),
+    ).toEqual(["true", "true"]);
+    pending[2]!(success("最初の段落"));
+    pending[3]!(success("次の段落"));
     await tick();
     expect(output()).toEqual(["最初の段落", "次の段落"]);
   });
@@ -251,9 +251,11 @@ describe("ページ翻訳", () => {
     document.body.innerHTML = "<p>Hello world.</p>";
     let resolve: ((value: unknown) => void) | undefined;
     let sessionId = "";
+    let requestId = "";
     const send = vi.fn((message: unknown) => {
       if (!isTranslationRequest(message)) return Promise.resolve(undefined);
       sessionId = message.sessionId;
+      requestId = message.requestId;
       return new Promise((done) => {
         resolve = done;
       });
@@ -267,7 +269,10 @@ describe("ページ翻訳", () => {
     expect(host?.getAttribute("aria-busy")).toBe("true");
     expect(spinner?.getAttribute("aria-hidden")).toBe("true");
     expect(spinner?.textContent).toBe("");
-    controller.progress(sessionId, "モデルを準備しています…");
+    controller.progress(sessionId, requestId, {
+      kind: "status",
+      message: "モデルを準備しています…",
+    });
     expect(output()).toEqual(["モデルを準備しています…"]);
     expect(shadow?.querySelector(".translation-spinner")).toBe(spinner);
     resolve?.(response);
@@ -278,25 +283,37 @@ describe("ページ翻訳", () => {
   });
 
   it("順番待ちの段落は進捗で書き換えず、実行中の段落だけbusyにする", async () => {
-    document.body.innerHTML = "<p>First paragraph.</p><p>Second paragraph.</p>";
+    document.body.innerHTML =
+      "<p>First paragraph.</p><p>Second paragraph.</p><p>Third paragraph.</p>";
     const pending: ((value: unknown) => void)[] = [];
     let sessionId = "";
+    let requestId = "";
     const controller = mount((message) => {
       if (!isTranslationRequest(message)) return Promise.resolve(undefined);
       sessionId = message.sessionId;
+      if (!requestId) requestId = message.requestId;
       return new Promise((resolve) => pending.push(resolve));
     });
     controller.toggle();
     const hosts = [...document.querySelectorAll("[data-luvpame-translation]")];
-    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["true", "false"]);
-    controller.progress(sessionId, "日本語に訳しています…");
-    expect(output()).toEqual(["日本語に訳しています…", "翻訳を待っています…"]);
+    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["true", "true", "false"]);
+    controller.progress(sessionId, requestId, { kind: "status", message: "日本語に訳しています…" });
+    expect(output()).toEqual([
+      "日本語に訳しています…",
+      "翻訳を待っています…",
+      "翻訳を待っています…",
+    ]);
     pending[0]!(success("最初の訳"));
     await tick();
-    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["false", "true"]);
+    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["false", "true", "true"]);
     pending[1]!(success("次の訳"));
+    pending[2]!(success("最後の訳"));
     await tick();
-    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual(["false", "false"]);
+    expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual([
+      "false",
+      "false",
+      "false",
+    ]);
   });
 
   it("動的に追加、書き換えられた英文を翻訳し、消えた段落の訳も消す", async () => {
@@ -362,9 +379,11 @@ describe("選択翻訳", () => {
   ])("選択翻訳の進捗中はbusyを保ち、応答時に終了する（%#）", async ({ response, text }) => {
     let finish: ((value: unknown) => void) | undefined;
     let sessionId = "";
+    let requestId = "";
     const controller = mount((message) => {
       if (!isTranslationRequest(message)) return Promise.resolve(undefined);
       sessionId = message.sessionId;
+      requestId = message.requestId;
       return new Promise((resolve) => {
         finish = resolve;
       });
@@ -376,7 +395,14 @@ describe("選択翻訳", () => {
     const spinner = panel?.querySelector(".translation-spinner");
     expect(panel?.getAttribute("aria-busy")).toBe("true");
     expect(panel?.querySelector('[role="status"]')?.textContent).toBe("日本語に訳しています…");
-    controller.progress(sessionId, "翻訳の準備をしています…");
+    controller.progress(sessionId, requestId, {
+      kind: "status",
+      message: "翻訳の準備をしています…",
+    });
+    controller.progress(sessionId, requestId, { kind: "text", text: "選択の途中訳" });
+    controller.progress(sessionId, requestId, { kind: "status", message: "上書きしない" });
+    controller.progress(sessionId, "old-request", { kind: "text", text: "古い要求" });
+    expect(panel?.querySelector('[role="status"]')?.textContent).toBe("選択の途中訳");
     expect(panel?.querySelector(".translation-spinner")).toBe(spinner);
     finish?.(response);
     await tick();
@@ -552,4 +578,69 @@ it("記事抽出にも本文の範囲と図・操作UIの除外を適用する",
   expect(text).toContain(sentence.trim());
   expect(text).not.toMatch(/demo text|Outside article/);
   expect(document.body.innerHTML).toBe(original);
+});
+
+it("rechecks the viewport before filling each free paragraph slot", async () => {
+  document.body.innerHTML =
+    "<p>First offscreen.</p><p>Second near.</p><p>Third visible.</p><p>Fourth moves.</p>";
+  const elements = [...document.querySelectorAll("p")];
+  const tops = [-2000, 900, 20, 2000];
+  elements.forEach((element, index) =>
+    vi
+      .spyOn(element, "getBoundingClientRect")
+      .mockImplementation(() => new DOMRect(0, tops[index], 400, 20)),
+  );
+  const pending: (() => void)[] = [];
+  const sent: string[] = [];
+  const controller = mount((message) => {
+    if (!isTranslationRequest(message)) return Promise.resolve(undefined);
+    sent.push(message.text);
+    return new Promise((resolve) => pending.push(() => resolve(success(message.text))));
+  });
+  controller.toggle();
+  expect(sent).toEqual(["Third visible.", "Second near."]);
+  tops[3] = 30;
+  pending[0]?.();
+  await tick();
+  expect(sent).toEqual(["Third visible.", "Second near.", "Fourth moves."]);
+  pending[1]?.();
+  await tick();
+  expect(sent.at(-1)).toBe("First offscreen.");
+  pending[2]?.();
+  pending[3]?.();
+  await tick();
+});
+
+it("keeps completed chunks while streaming the current one and ignores old requests and changed source", async () => {
+  document.body.innerHTML = `<p>${"Hello world. ".repeat(150)}</p>`;
+  const requests: { sessionId: string; requestId: string; finish: (value: unknown) => void }[] = [];
+  const controller = mount((message) => {
+    if (!isTranslationRequest(message)) return Promise.resolve(undefined);
+    return new Promise((finish) =>
+      requests.push({ sessionId: message.sessionId, requestId: message.requestId, finish }),
+    );
+  });
+  controller.toggle();
+  const first = requests[0]!;
+  controller.progress(first.sessionId, first.requestId, { kind: "text", text: "途中" });
+  controller.progress(first.sessionId, first.requestId, {
+    kind: "status",
+    message: "上書きしない",
+  });
+  expect(output()).toEqual(["途中"]);
+  first.finish(success("確定した前半"));
+  await tick();
+  const second = requests[1]!;
+  controller.progress(second.sessionId, second.requestId, { kind: "text", text: "後半の途中" });
+  expect(output()).toEqual(["確定した前半\n後半の途中"]);
+  controller.progress(first.sessionId, first.requestId, { kind: "text", text: "古い前半" });
+  expect(output()).toEqual(["確定した前半\n後半の途中"]);
+  document.querySelector("p")!.textContent = "Replaced source.";
+  controller.progress(second.sessionId, second.requestId, { kind: "text", text: "変更前の訳" });
+  expect(output()).toEqual(["確定した前半\n後半の途中"]);
+  second.finish(success("変更前の確定訳"));
+  await tick();
+  requests[2]?.finish(success("置換後"));
+  await tick();
+  expect(output()).toEqual(["置換後"]);
 });

@@ -95,7 +95,8 @@ label {
   font-weight: 500;
 }
 textarea,
-select {
+select,
+.model-settings input {
   box-sizing: border-box;
   width: 100%;
   border: 1px solid var(--border);

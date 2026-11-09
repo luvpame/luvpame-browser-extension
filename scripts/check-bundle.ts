@@ -19,6 +19,15 @@ assert.deepEqual(
     "sidePanel",
   ].sort(),
 );
+assert.deepEqual(
+  [...manifest.host_permissions].sort(),
+  [
+    "https://github.com/*",
+    "https://huggingface.co/*",
+    "https://*.hf.co/*",
+    "http://localhost/*",
+  ].sort(),
+);
 assert.equal(manifest.content_scripts.length, 4);
 assert.equal(manifest.side_panel.default_path, "sidepanel.html");
 assert.equal(manifest.commands["toggle-page-translation"].suggested_key.mac, "Alt+A");

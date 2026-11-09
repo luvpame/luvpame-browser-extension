@@ -1,25 +1,42 @@
 import { useEffect, useState } from "react";
 import { errorText } from "../../lib/copy-protocol";
-import { readTranslationModel, saveTranslationModel } from "./settings";
-import type { TranslationModel } from "./shared";
+import {
+  DEFAULT_OLLAMA_MODEL,
+  readOllamaModel,
+  readTranslationModel,
+  readTranslationSettings,
+  saveTranslationProvider,
+} from "./settings";
+import { isOllamaModel, type TranslationModel, type TranslationProvider } from "./shared";
 
 export function TranslationModelSettings() {
   const [model, setModel] = useState<TranslationModel>("2b");
+  const [backend, setBackend] = useState<TranslationProvider["kind"]>("browser");
+  const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
+  const [savedOllamaModel, setSavedOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("");
   useEffect(() => {
-    void readTranslationModel()
-      .then((value) => {
-        setModel(value);
+    void Promise.all([readTranslationSettings(), readTranslationModel(), readOllamaModel()])
+      .then(([provider, model, ollama]) => {
+        setBackend(provider.kind);
+        setModel(model);
+        setOllamaModel(ollama);
+        setSavedOllamaModel(ollama);
         setReady(true);
       })
       .catch((error) => setStatus(errorText(error)));
   }, []);
-  const save = async (next: TranslationModel) => {
+  const save = async (next: TranslationProvider) => {
     setReady(false);
     try {
-      await saveTranslationModel(next);
-      setModel(next);
+      await saveTranslationProvider(next);
+      setBackend(next.kind);
+      if (next.kind === "browser") setModel(next.model);
+      else {
+        setOllamaModel(next.model);
+        setSavedOllamaModel(next.model);
+      }
       setStatus("翻訳モデルを保存しました。次の翻訳から使用します。");
     } catch (error) {
       setStatus(errorText(error));
@@ -31,22 +48,66 @@ export function TranslationModelSettings() {
     <fieldset className="model-settings">
       <legend>翻訳モデル</legend>
       <p className="hint section-description">モデルを選ぶと保存され、次の翻訳から使われます。</p>
-      <label htmlFor="translation-model">3つの翻訳機能で使うモデル</label>
+      <label htmlFor="translation-backend">翻訳の実行方法</label>
       <select
-        id="translation-model"
-        value={model}
+        id="translation-backend"
+        value={backend}
         disabled={!ready}
         onChange={(event) => {
-          const value = event.target.value;
-          if (value === "0.8b" || value === "2b") void save(value);
+          const kind = event.target.value;
+          if (kind === "browser") void save({ kind, model });
+          if (kind === "ollama") void save({ kind, model: savedOllamaModel });
         }}
       >
-        <option value="2b">PLaMo 3 Translate 2B（約1.81GB）</option>
-        <option value="0.8b">PLaMo 3 Translate 0.8B（約573MB）</option>
+        <option value="browser">ブラウザで実行</option>
+        <option value="ollama">この端末のOllamaで実行</option>
       </select>
-      <p className="hint">
-        初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合も、同じモデルをCPUで処理します。
-      </p>
+      {backend === "browser" ? (
+        <>
+          <label htmlFor="translation-model">3つの翻訳機能で使うモデル</label>
+          <select
+            id="translation-model"
+            value={model}
+            disabled={!ready}
+            onChange={(event) => {
+              const value = event.target.value;
+              if (value === "0.8b" || value === "2b") void save({ kind: "browser", model: value });
+            }}
+          >
+            <option value="2b">PLaMo 3 Translate 2B（約1.81GB）</option>
+            <option value="0.8b">PLaMo 3 Translate 0.8B（約573MB）</option>
+          </select>
+          <p className="hint">
+            初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合も、同じモデルをCPUで処理します。
+          </p>
+        </>
+      ) : (
+        <>
+          <label htmlFor="translation-ollama-model">端末内のPLaMoモデル名</label>
+          <input
+            id="translation-ollama-model"
+            list="translation-ollama-models"
+            value={ollamaModel}
+            disabled={!ready}
+            onChange={(event) => setOllamaModel(event.target.value)}
+          />
+          <datalist id="translation-ollama-models">
+            <option value={DEFAULT_OLLAMA_MODEL} />
+            <option value="hf.co/pfnet/plamo-3-translate-2b-GGUF:Q4_K_M" />
+          </datalist>
+          <button
+            type="button"
+            disabled={!ready || !isOllamaModel(ollamaModel)}
+            onClick={() => void save({ kind: "ollama", model: ollamaModel })}
+          >
+            Ollamaモデルを保存
+          </button>
+          <p className="hint">
+            文章はこの端末のOllama（localhost:11434）に送信します。PLaMo
+            TranslateのGGUFモデルを事前に取得してください。ブラウザ実行への自動切替はしません。
+          </p>
+        </>
+      )}
       <p className="hint">
         原文下の翻訳はOption+Aで開始・解除できます。他の拡張と競合する場合は
         chrome://extensions/shortcuts で変更してください。

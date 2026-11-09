@@ -9,6 +9,9 @@ import {
   TRANSLATION_PROGRESS,
   isSessionId,
   isTranslationRequest,
+  isTranslationProvider,
+  type TranslationUpdate,
+  type TranslationOptions,
 } from "../../features/translate/shared";
 
 const translations = new Map<string, Set<AbortController>>();
@@ -22,35 +25,54 @@ browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
   if (message.type !== OFFSCREEN_TRANSLATE) return;
   if (
     !isTranslationRequest({ ...message, type: TRANSLATE }) ||
-    typeof message.requestId !== "string" ||
+    !isTranslationProvider(message.provider) ||
+    !isSessionId(message.requestId) ||
     !isSessionId(message.sessionId) ||
     typeof message.text !== "string" ||
     (message.target !== "ja" && message.target !== "ja-easy") ||
-    (message.model !== "0.8b" && message.model !== "2b")
+    (message.priority !== "selection" &&
+      message.priority !== "page" &&
+      message.priority !== "article")
   ) {
     respond({ requestId: message.requestId, ok: false, error: "翻訳リクエストが不正です。" });
     return;
   }
-  const { sessionId, text, target, model, requestId } = message;
+  const { sessionId, text, target, provider, requestId, priority } = message;
   const controller = new AbortController();
   const controllers = translations.get(sessionId) ?? new Set<AbortController>();
   controllers.add(controller);
   translations.set(sessionId, controllers);
   void (async () => {
     try {
-      const { translate } = await import("../../features/translate/engine");
-      const result = await translate(text, target, model, {
+      let lastUpdate = 0;
+      const sendUpdate = (update: TranslationUpdate) => {
+        if (controller.signal.aborted) return;
+        const now = Date.now();
+        if (update.kind === "text" && now - lastUpdate < 60) return;
+        if (update.kind === "text") lastUpdate = now;
+        void browser.runtime
+          .sendMessage({
+            type: TRANSLATION_PROGRESS,
+            sessionId,
+            requestId,
+            update,
+          })
+          .catch(() => {});
+      };
+      const options: TranslationOptions = {
         signal: controller.signal,
-        onProgress: (progress) => {
-          void browser.runtime
-            .sendMessage({
-              type: TRANSLATION_PROGRESS,
-              sessionId,
-              message: progress,
-            })
-            .catch(() => {});
-        },
-      });
+        priority,
+        onProgress: (message: string) => sendUpdate({ kind: "status", message }),
+        onText: (text: string) => sendUpdate({ kind: "text", text }),
+      };
+      const result =
+        provider.kind === "browser"
+          ? await (
+              await import("../../features/translate/engine")
+            ).translate(text, target, provider.model, options)
+          : await (
+              await import("../../features/translate/ollama")
+            ).translateWithOllama(text, target, provider.model, options);
       respond({ requestId, ok: true, ...result });
     } catch (error) {
       respond({ requestId, ok: false, error: errorText(error) });

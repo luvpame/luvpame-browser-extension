@@ -39,7 +39,14 @@ import {
   TRANSLATION_READY,
 } from "./shared";
 
-const request = { type: TRANSLATE, sessionId: "session-1", text: "Hello world", target: "ja" };
+const request = {
+  type: TRANSLATE,
+  sessionId: "session-1",
+  requestId: "request-1",
+  priority: "page",
+  text: "Hello world",
+  target: "ja",
+};
 const sender = { id: "test-extension", tab: { id: 7 }, frameId: 0, url: "https://example.com" };
 const menus = new Map<string | number, Browser.contextMenus.CreateProperties>();
 const menuIds = ["luvpame:page-translation", "luvpame:easy-article"];
@@ -236,7 +243,7 @@ it("uses the persisted model and scopes content requests to the sender tab", asy
     expect.objectContaining({
       type: OFFSCREEN_TRANSLATE,
       sessionId: "tab-7:session-1",
-      model: "0.8b",
+      provider: { kind: "browser", model: "0.8b" },
       text: "Hello world",
     }),
   );
@@ -407,4 +414,90 @@ it("notifies the keyboard command when a content receiver rejects translation", 
   );
   expect(api.tabs.sendMessage).toHaveBeenCalledTimes(2);
   expect(api.scripting.executeScript).not.toHaveBeenCalled();
+});
+
+it("routes concurrent chunks by request and tab, and ignores late progress after settlement", async () => {
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  const pending = new Map<string, (value: unknown) => void>();
+  api.runtime.sendMessage.mockImplementation(
+    (message) =>
+      new Promise((resolve) => {
+        pending.set(`${message.sessionId}:${message.requestId}`, resolve);
+      }),
+  );
+  const first = vi.fn();
+  const second = vi.fn();
+  const anotherTab = vi.fn();
+  listener(request, sender, first);
+  listener({ ...request, requestId: "request-2" }, sender, second);
+  listener(request, { ...sender, tab: { id: 8 } }, anotherTab);
+  await vi.waitFor(() => expect(pending.size).toBe(3));
+  const emit = (sessionId: string, requestId: string, text: string) =>
+    listener(
+      {
+        type: "luvpame:translation-progress",
+        sessionId,
+        requestId,
+        update: { kind: "text", text },
+      },
+      { id: "test-extension" },
+      vi.fn(),
+    );
+  emit("tab-7:session-1", "request-2", "途中");
+  expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(7, {
+    type: "luvpame:translation-progress",
+    sessionId: "session-1",
+    requestId: "request-2",
+    update: { kind: "text", text: "途中" },
+  });
+  pending.get("tab-7:session-1:request-2")?.({
+    requestId: "request-2",
+    ok: true,
+    text: "確定",
+    device: "cpu",
+  });
+  await vi.waitFor(() => expect(second).toHaveBeenCalled());
+  const count = api.tabs.sendMessage.mock.calls.length;
+  emit("tab-7:session-1", "request-2", "古い訳");
+  expect(api.tabs.sendMessage).toHaveBeenCalledTimes(count);
+  emit("tab-8:session-1", "request-1", "別タブ");
+  expect(api.tabs.sendMessage.mock.calls.at(-1)?.[0]).toBe(8);
+  api.offscreen.hasDocument.mockResolvedValue(true);
+  listener({ type: CANCEL_TRANSLATION, sessionId: request.sessionId }, sender, vi.fn());
+  const afterCancel = api.tabs.sendMessage.mock.calls.length;
+  emit("tab-7:session-1", "request-1", "取消後");
+  expect(api.tabs.sendMessage).toHaveBeenCalledTimes(afterCancel);
+  pending.get("tab-7:session-1:request-1")?.({
+    requestId: "request-1",
+    ok: true,
+    text: "確定",
+    device: "cpu",
+  });
+  pending.get("tab-8:session-1:request-1")?.({
+    requestId: "request-1",
+    ok: true,
+    text: "確定",
+    device: "cpu",
+  });
+  await vi.waitFor(() => {
+    expect(first).toHaveBeenCalledWith({ ok: false, error: "翻訳を停止しました。" });
+    expect(anotherTab).toHaveBeenCalled();
+  });
+});
+
+it("passes the explicit Ollama provider through the same offscreen path", async () => {
+  api.storage.local.get.mockResolvedValue({
+    translationBackend: "ollama",
+    translationOllamaModel: "plamo-local:test",
+  });
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  await new Promise((resolve) => listener(request, sender, resolve));
+  expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+    expect.objectContaining({
+      type: OFFSCREEN_TRANSLATE,
+      provider: { kind: "ollama", model: "plamo-local:test" },
+    }),
+  );
 });

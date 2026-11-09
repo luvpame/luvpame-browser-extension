@@ -1,6 +1,12 @@
 import { browser } from "wxt/browser";
 import loadingCss from "./loading.css?inline";
-import { CANCEL_TRANSLATION, TRANSLATE, isTranslationResult } from "./shared";
+import {
+  CANCEL_TRANSLATION,
+  TRANSLATE,
+  isTranslationResult,
+  type TranslationPriority,
+  type TranslationUpdate,
+} from "./shared";
 
 const OWN = "data-luvpame-translation";
 const EXCLUDED = `script,style,noscript,code,pre,input,textarea,select,button,svg,canvas,iframe,nav,footer,aside,[contenteditable]:not([contenteditable="false"]),[role="navigation"],[role="menu"],[role="textbox"],[role="banner"],[role="complementary"],[hidden],[aria-hidden="true"],[${OWN}]`;
@@ -124,18 +130,52 @@ export function createTranslationController({
   let selectionHost: HTMLElement | undefined;
   let selectionRect: DOMRect | undefined;
 
+  const requests = new Map<
+    string,
+    { sessionId: string; update: (value: TranslationUpdate) => void }
+  >();
   const cancel = (id: string) => {
     if (id) void send({ type: CANCEL_TRANSLATION, sessionId: id }).catch(() => {});
   };
-  const translate = async (text: string, id: string, current: () => boolean) => {
+  const translate = async (
+    text: string,
+    id: string,
+    current: () => boolean,
+    output: (text: string) => void,
+    priority: TranslationPriority,
+  ) => {
     const parts: string[] = [];
     for (const chunk of splitTranslationText(text)) {
       if (!current()) return undefined;
-      const result = await send({ type: TRANSLATE, text: chunk, target: "ja", sessionId: id });
-      if (!current()) return undefined;
-      if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
-      if (!result.ok) throw new Error(result.error);
-      parts.push(result.text);
+      const requestId = crypto.randomUUID();
+      let hasText = false;
+      requests.set(requestId, {
+        sessionId: id,
+        update: (value) => {
+          if (!current()) return;
+          if (value.kind === "text") {
+            hasText ||= Boolean(value.text);
+            output([...parts, value.text].join("\n"));
+          } else if (!parts.length && !hasText) output(value.message);
+        },
+      });
+      try {
+        const result = await send({
+          type: TRANSLATE,
+          text: chunk,
+          target: "ja",
+          sessionId: id,
+          requestId,
+          priority,
+        });
+        if (!current()) return undefined;
+        if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
+        if (!result.ok) throw new Error(result.error);
+        parts.push(result.text);
+        output(parts.join("\n"));
+      } finally {
+        requests.delete(requestId);
+      }
     }
     return parts.join("\n");
   };
@@ -176,29 +216,66 @@ export function createTranslationController({
     const epoch = generation;
     runningGeneration = epoch;
     const id = sessionId;
+    const tasks = new Set<Promise<void>>();
+    const processEntry = async (element: Element, entry: Entry) => {
+      entry.state = "running";
+      entry.host.setAttribute("aria-busy", "true");
+      const current = () =>
+        active &&
+        epoch === generation &&
+        element.isConnected &&
+        entries.get(element) === entry &&
+        sourceText(element) === entry.text;
+      try {
+        const text = await translate(
+          entry.text,
+          id,
+          current,
+          (text) => {
+            entry.output.textContent = text;
+          },
+          "page",
+        );
+        if (current() && text !== undefined) entry.output.textContent = text;
+      } catch (error) {
+        if (current())
+          entry.output.textContent =
+            error instanceof Error ? error.message : "翻訳に失敗しました。";
+      } finally {
+        entry.state = "done";
+        entry.host.setAttribute("aria-busy", "false");
+      }
+    };
     try {
-      for (const [element, entry] of entries) {
-        if (!active || epoch !== generation) break;
-        if (entry.state !== "queued") continue;
-        entry.state = "running";
-        entry.host.setAttribute("aria-busy", "true");
-        const current = () =>
-          active &&
-          epoch === generation &&
-          element.isConnected &&
-          entries.get(element) === entry &&
-          sourceText(element) === entry.text;
-        try {
-          const text = await translate(entry.text, id, current);
-          if (current() && text !== undefined) entry.output.textContent = text;
-        } catch (error) {
-          if (current())
-            entry.output.textContent =
-              error instanceof Error ? error.message : "翻訳に失敗しました。";
-        } finally {
-          entry.state = "done";
-          entry.host.setAttribute("aria-busy", "false");
+      while (active && epoch === generation) {
+        while (tasks.size < 2) {
+          const next = Array.from(entries)
+            .filter(([, entry]) => entry.state === "queued")
+            .sort(([a], [b]) => {
+              const distance = (element: Element) => {
+                const rect = element.getBoundingClientRect();
+                return Math.max(
+                  0,
+                  -rect.bottom,
+                  rect.top - win.innerHeight,
+                  -rect.right,
+                  rect.left - win.innerWidth,
+                );
+              };
+              return (
+                distance(a) - distance(b) ||
+                (a.compareDocumentPosition(b) & win.Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
+              );
+            })[0];
+          if (!next) break;
+          const [element, entry] = next;
+
+          const task = processEntry(element, entry);
+          tasks.add(task);
+          void task.finally(() => tasks.delete(task));
         }
+        if (!tasks.size) break;
+        await Promise.race(tasks);
       }
     } finally {
       if (runningGeneration === epoch) {
@@ -362,7 +439,15 @@ export function createTranslationController({
       panel.append(close, spinner, output);
       button.replaceWith(panel);
       close.focus();
-      void translate(text, id, () => selectionSession === id)
+      void translate(
+        text,
+        id,
+        () => selectionSession === id,
+        (text) => {
+          output.textContent = text;
+        },
+        "selection",
+      )
         .then((result) => {
           if (selectionSession === id && result !== undefined) output.textContent = result;
         })
@@ -429,14 +514,9 @@ export function createTranslationController({
       }
       return { ok: true, active };
     },
-    progress(id: string, message: string) {
-      if (id === sessionId)
-        for (const entry of entries.values())
-          if (entry.state === "running") entry.output.textContent = message;
-      if (id === selectionSession) {
-        const output = selectionHost?.shadowRoot?.querySelector('[role="status"]');
-        if (output) output.textContent = message;
-      }
+    progress(id: string, requestId: string, update: TranslationUpdate) {
+      const request = requests.get(requestId);
+      if (request?.sessionId === id) request.update(update);
     },
     reset,
     dispose() {

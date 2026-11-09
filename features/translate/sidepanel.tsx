@@ -12,6 +12,7 @@ import {
   TRANSLATE,
   TRANSLATION_PROGRESS,
   isTranslationResult,
+  isTranslationUpdate,
 } from "./shared";
 
 type Page = { id: number; url: string; title: string; paragraphs: string[] };
@@ -25,6 +26,7 @@ export function Sidepanel() {
   const [cpu, setCpu] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
+  const [completed, setCompleted] = useState(0);
   const [articleError, setArticleError] = useState("");
   useEffect(() => {
     let disposed = false;
@@ -108,6 +110,7 @@ export function Sidepanel() {
     };
     setTitle("");
     setParagraphs([]);
+    setCompleted(0);
     setCpu(false);
     setFailed(false);
     if (!enabled) {
@@ -119,6 +122,7 @@ export function Sidepanel() {
       setStatus(articleError || "HTTP/HTTPSの通常のWebページを開いてください。");
       return;
     }
+    let activeRequest: { id: string; update: (value: unknown) => void } | undefined;
     const onProgress = (message: unknown, sender: { id?: string; tab?: unknown }) => {
       if (
         sender.id === browser.runtime.id &&
@@ -126,10 +130,10 @@ export function Sidepanel() {
         isRecord(message) &&
         message.type === TRANSLATION_PROGRESS &&
         message.sessionId === sessionId &&
-        typeof message.message === "string" &&
+        message.requestId === activeRequest?.id &&
         !disposed
       )
-        setStatus(message.message);
+        activeRequest?.update(message.update);
     };
     browser.runtime.onMessage.addListener(onProgress);
     window.addEventListener("pagehide", cancel);
@@ -143,20 +147,41 @@ export function Sidepanel() {
         for (const chunk of splitTranslationText(text)) {
           if (disposed) return;
           setStatus(`やさしい日本語に訳しています… ${index + 1}/${texts.length}`);
-          const result: unknown = await browser.runtime.sendMessage({
-            type: TRANSLATE,
-            text: chunk,
-            target: "ja-easy",
-            sessionId,
-          });
+          const requestId = crypto.randomUUID();
+          let hasText = false;
+          activeRequest = {
+            id: requestId,
+            update: (update) => {
+              if (!isTranslationUpdate(update)) return;
+              if (update.kind === "text") {
+                hasText ||= Boolean(update.text);
+                setParagraphs([...translated, [...parts, update.text].join("\n")]);
+              } else if (!hasText) setStatus(update.message);
+            },
+          };
+          let result: unknown;
+          try {
+            result = await browser.runtime.sendMessage({
+              type: TRANSLATE,
+              text: chunk,
+              target: "ja-easy",
+              sessionId,
+              requestId,
+              priority: "article",
+            });
+          } finally {
+            activeRequest = undefined;
+          }
           if (disposed) return;
           if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
           if (!result.ok) throw new Error(result.error);
           if (result.device === "cpu") setCpu(true);
           parts.push(result.text);
+          setParagraphs([...translated, parts.join("\n")]);
         }
         translated.push(parts.join("\n"));
         setParagraphs([...translated]);
+        setCompleted(translated.length);
       }
       if (!disposed) setStatus("記事全体の翻訳が完了しました。");
     };
@@ -171,7 +196,7 @@ export function Sidepanel() {
       browser.runtime.onMessage.removeListener(onProgress);
     };
   }, [enabled, page, attempt, articleError]);
-  const busy = Boolean(enabled && page && !failed && paragraphs.length < page.paragraphs.length);
+  const busy = Boolean(enabled && page && !failed && completed < page.paragraphs.length);
   return (
     <main className="reading-pane">
       <header className="reading-header">
@@ -181,7 +206,9 @@ export function Sidepanel() {
         </div>
         <h1>やさしい日本語で読む</h1>
         <p className="hint">記事全体をこの端末で翻訳します。</p>
-        <p className="hint">初回はモデルのダウンロードに時間がかかります。</p>
+        <p className="hint">
+          ブラウザ実行の初回はモデルのダウンロードに時間がかかります。Ollamaは共通設定で選べます。
+        </p>
       </header>
       <div className="reading-status" data-failed={failed}>
         <p role="status" aria-busy={busy}>

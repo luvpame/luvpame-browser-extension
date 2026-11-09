@@ -89,7 +89,13 @@ describe("translate", () => {
     );
     expect(mocks.load).toHaveBeenCalledWith(
       "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
-      expect.objectContaining({ n_parallel: 1, n_gpu_layers: 999, cache_idle_slots: false }),
+      expect.objectContaining({
+        n_parallel: 2,
+        n_ctx: 8192,
+        kv_unified: false,
+        n_gpu_layers: 999,
+        cache_idle_slots: false,
+      }),
     );
     expect(mocks.setCompat).toHaveBeenCalledWith({
       worker: "chrome-extension://test/vendor/wllama-compat-worker.js",
@@ -313,4 +319,132 @@ describe("translate", () => {
       expect((await translate("next", "ja", "2b", options())).text).toBe("翻訳結果");
     },
   );
+});
+
+it("streams cumulative text and reuses only a successful result for the exact model and target", async () => {
+  const { translate } = await import("./engine");
+  const onText = vi.fn();
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    params.onData(chunk("最初", null));
+    params.onData(chunk("と最後"));
+  });
+  expect((await translate("Cached source", "ja", "2b", { ...options(), onText })).text).toBe(
+    "最初と最後",
+  );
+  expect(onText.mock.calls.map(([text]) => text)).toEqual(["最初", "最初と最後"]);
+  expect((await translate("Cached source", "ja", "2b", options())).text).toBe("最初と最後");
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  await translate("Cached source", "ja-easy", "2b", options());
+  await translate("Cached source", "ja", "0.8b", options());
+  expect(mocks.complete).toHaveBeenCalledTimes(3);
+});
+
+it("retries the same source after a failed or aborted completion", async () => {
+  const { translate } = await import("./engine");
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) =>
+    params.onData(chunk("途中", "length")),
+  );
+  await expect(translate("Retry source", "ja", "2b", options())).rejects.toThrow();
+  await translate("Retry source", "ja", "2b", options());
+  expect(mocks.complete).toHaveBeenCalledTimes(2);
+  const controller = new AbortController();
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    controller.abort();
+    params.onData(chunk("途中"));
+  });
+  await expect(
+    translate("Aborted source", "ja", "2b", { ...options(), signal: controller.signal }),
+  ).rejects.toThrow();
+  await translate("Aborted source", "ja", "2b", options());
+  expect(mocks.complete).toHaveBeenCalledTimes(4);
+});
+
+it("loads once, runs at most two GPU chunks of one model and drains both before switching", async () => {
+  const { translate } = await import("./engine");
+  const finish: (() => void)[] = [];
+  let active = 0;
+  let peak = 0;
+  mocks.complete.mockImplementation(async (params: CompletionOptions) => {
+    active += 1;
+    peak = Math.max(peak, active);
+    await new Promise<void>((resolve) => {
+      finish.push(resolve);
+    });
+    params.onData(chunk("完了"));
+    active -= 1;
+  });
+  mocks.exit.mockImplementation(async () => {
+    expect(active).toBe(0);
+  });
+  const tasks = [
+    translate("first", "ja", "2b", options()),
+    translate("second", "ja", "2b", options()),
+    translate("third", "ja", "2b", options()),
+    translate("other model", "ja", "0.8b", options()),
+  ];
+  await vi.waitFor(() => expect(finish).toHaveLength(2));
+  expect(mocks.load).toHaveBeenCalledTimes(1);
+  finish[0]?.();
+  await vi.waitFor(() => expect(finish).toHaveLength(3));
+  finish[2]?.();
+  await Promise.resolve();
+  expect(mocks.exit).not.toHaveBeenCalled();
+  finish[1]?.();
+  await vi.waitFor(() => expect(finish).toHaveLength(4));
+  expect(mocks.exit).toHaveBeenCalledTimes(1);
+  finish[3]?.();
+  await Promise.all(tasks);
+  expect(peak).toBe(2);
+});
+
+it("keeps CPU inference serial with its original context budget", async () => {
+  const { translate } = await import("./engine");
+  mocks.gpu.mockResolvedValue(null);
+  const finish: (() => void)[] = [];
+  mocks.complete.mockImplementation(async (params: CompletionOptions) => {
+    await new Promise<void>((resolve) => {
+      finish.push(resolve);
+    });
+    params.onData(chunk("完了"));
+  });
+  const first = translate("first cpu", "ja", "2b", options());
+  const second = translate("second cpu", "ja", "2b", options());
+  await vi.waitFor(() => expect(finish).toHaveLength(1));
+  expect(mocks.load).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({ n_parallel: 1, n_ctx: 4096, n_gpu_layers: 0 }),
+  );
+  finish[0]?.();
+  await vi.waitFor(() => expect(finish).toHaveLength(2));
+  finish[1]?.();
+  await Promise.all([first, second]);
+});
+
+it("cancels one GPU chunk without interrupting the other chunk or unloading its model", async () => {
+  const { translate } = await import("./engine");
+  const finish: (() => void)[] = [];
+  mocks.complete.mockImplementation(async (params: CompletionOptions) => {
+    await new Promise<void>((resolve, reject) => {
+      finish.push(resolve);
+      params.abortSignal?.addEventListener("abort", () => reject(params.abortSignal?.reason), {
+        once: true,
+      });
+    });
+    params.onData(chunk("完了"));
+  });
+  const controller = new AbortController();
+  const first = translate("cancel GPU", "ja", "2b", { ...options(), signal: controller.signal });
+  const rejected = expect(first).rejects.toMatchObject({ name: "AbortError" });
+  const second = translate("keep GPU", "ja", "2b", options());
+  await vi.waitFor(() => expect(finish).toHaveLength(2));
+  controller.abort();
+  await rejected;
+  finish[1]?.();
+  expect((await second).text).toBe("完了");
+  expect(mocks.exit).not.toHaveBeenCalled();
+  const next = translate("next GPU", "ja", "2b", options());
+  await vi.waitFor(() => expect(finish).toHaveLength(3));
+  finish[2]?.();
+  await next;
+  expect(mocks.load).toHaveBeenCalledTimes(1);
 });
