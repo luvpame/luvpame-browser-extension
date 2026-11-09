@@ -44,11 +44,35 @@ async function loadModel(
   options.signal.throwIfAborted();
   let device: TranslationDevice = (await canUseGpu()) ? "gpu" : "cpu";
   options.signal.throwIfAborted();
-  let runtime = new Wllama(
-    { default: new URL("vendor/wllama.wasm", browser.runtime.getURL("/")).href },
-    { allowOffline: true, suppressNativeLog: true },
-  );
   for (;;) {
+    let collectingLogs = true;
+    let nativeDevice: TranslationDevice | undefined;
+    let offloadedDevice: TranslationDevice | undefined;
+    const captureLog = (...args: unknown[]) => {
+      if (!collectingLogs) return;
+      for (const message of args) {
+        if (typeof message !== "string") continue;
+        const offloaded = /offloaded (\d+)\/\d+ layers to GPU/i.exec(message);
+        if (offloaded) offloadedDevice = Number(offloaded[1]) > 0 ? "gpu" : "cpu";
+        if (/ggml_webgpu: Failed to get (?:an adapter|a device):/i.test(message)) {
+          nativeDevice = "cpu";
+        } else if (/using device WebGPU/i.test(message)) {
+          nativeDevice = "gpu";
+        }
+      }
+    };
+    const runtime = new Wllama(
+      { default: new URL("vendor/wllama.wasm", browser.runtime.getURL("/")).href },
+      {
+        allowOffline: true,
+        suppressNativeLog: false,
+        logger: { debug: captureLog, log: captureLog, warn: captureLog, error: captureLog },
+      },
+    );
+    runtime.setCompat({
+      worker: new URL("vendor/wllama-compat-worker.js", browser.runtime.getURL("/")).href,
+      wasm: new URL("vendor/wllama-compat.wasm", browser.runtime.getURL("/")).href,
+    });
     options.onProgress(`${device === "gpu" ? "GPU" : "CPU"} で PLaMo ${model} を準備中…`);
     try {
       await runtime.loadModelFromUrl(modelUrl(model), {
@@ -68,18 +92,16 @@ async function loadModel(
         },
       });
       options.signal.throwIfAborted();
-      loadedModel = { runtime, model, device };
+      loadedModel = { runtime, model, device: offloadedDevice ?? nativeDevice ?? device };
       return loadedModel;
     } catch (error) {
       await runtime.exit();
       options.signal.throwIfAborted();
       if (device === "cpu") throw error;
       options.onProgress("GPU を利用できないため、同じモデルを CPU で読み込みます…");
-      runtime = new Wllama(
-        { default: new URL("vendor/wllama.wasm", browser.runtime.getURL("/")).href },
-        { allowOffline: true, suppressNativeLog: true },
-      );
       device = "cpu";
+    } finally {
+      collectingLogs = false;
     }
   }
 }

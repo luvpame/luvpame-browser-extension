@@ -38,7 +38,7 @@ export function FeatureToggles({
             disabled={!features || pending.includes(key)}
             onChange={(event) => void toggle(key, event.target.checked)}
           />
-          {featureLabels[key]}
+          <span>{featureLabels[key]}</span>
         </label>
       ))}
     </fieldset>

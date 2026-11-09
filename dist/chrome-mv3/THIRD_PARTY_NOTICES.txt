@@ -237,6 +237,7 @@ THE SOFTWARE.
 
 
 === @wllama/wllama@3.13.0 ===
+=== @wllama/wllama-compat@3.13.0 (bundled compatibility worker and WASM; same license) ===
 MIT License
 
 Copyright (c) 2024 Xuan Son NGUYEN

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import "./sidepanel.css";
 import { browser } from "wxt/browser";
 import { watchFeatures } from "../../lib/features";
 import { isRecord, errorText } from "../../lib/copy-protocol";
@@ -169,18 +170,25 @@ export function Sidepanel() {
     };
   }, [enabled, page, attempt, articleError]);
   return (
-    <main style={{ padding: 18, overflowWrap: "anywhere" }}>
-      <h1>やさしい日本語で読む</h1>
-      <p className="hint">記事全体を翻訳します。初回はモデルのダウンロードに時間がかかります。</p>
-      <p role="status">{status}</p>
-      {cpu && <p className="hint">CPUで翻訳しています。完了まで時間がかかる場合があります。</p>}
-      {failed && <button onClick={() => setAttempt((value) => value + 1)}>再試行</button>}
-      {title && <h2>{title}</h2>}
+    <main className="reading-pane">
+      <header className="reading-header">
+        <div className="reading-brand">
+          <img src="/icon/48.png" width="32" height="32" alt="" />
+          <span>Luvpame</span>
+        </div>
+        <h1>やさしい日本語で読む</h1>
+        <p className="hint">記事全体をこの端末で翻訳します。</p>
+        <p className="hint">初回はモデルのダウンロードに時間がかかります。</p>
+      </header>
+      <div className="reading-status" data-failed={failed}>
+        <p role="status">{status}</p>
+        {cpu && <p className="hint">CPUで翻訳しています。完了まで時間がかかる場合があります。</p>}
+        {failed && <button onClick={() => setAttempt((value) => value + 1)}>再試行</button>}
+      </div>
+      {title && <h2 className="reading-title">{title}</h2>}
       <article lang="ja">
         {paragraphs.map((text, index) => (
-          <p key={index} style={{ whiteSpace: "pre-wrap" }}>
-            {text}
-          </p>
+          <p key={index}>{text}</p>
         ))}
       </article>
     </main>

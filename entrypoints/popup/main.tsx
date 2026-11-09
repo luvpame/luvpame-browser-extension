@@ -66,35 +66,66 @@ function Popup() {
   return (
     <main className="popup">
       <header className="popup-header">
-        <h1>Luvpame</h1>
+        <div className="brand">
+          <img src="/icon/48.png" width="44" height="44" alt="" />
+          <div>
+            <h1>Luvpame</h1>
+            <p>ページのコピーと翻訳</p>
+          </div>
+        </div>
         <button
           onClick={() =>
             void browser.runtime.openOptionsPage().catch((error) => setStatus(errorText(error)))
           }
         >
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M4 7h16M4 17h16M9 4v6m6 4v6" />
+          </svg>
           設定
         </button>
       </header>
-      <div className="popup-actions">
+      <div className="popup-actions copy-actions">
         <button
           disabled={busy || tabId === undefined || !features?.urlCopyEnabled}
           onClick={() => void copy("url")}
         >
-          URLをMarkdownでコピー{features?.urlCopyEnabled === false ? "（OFF）" : ""}
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="m10 13 4-4m-6 6-1 1a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 3 1-1a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" />
+          </svg>
+          <span>
+            <strong>URLをコピー{features?.urlCopyEnabled === false ? "（OFF）" : ""}</strong>
+            <small>ページのリンクをMarkdownで</small>
+          </span>
         </button>
         <button
           disabled={busy || tabId === undefined || !features?.bodyCopyEnabled}
           onClick={() => void copy("body")}
         >
-          本文をMarkdownでコピー{features?.bodyCopyEnabled === false ? "（OFF）" : ""}
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <rect x="8" y="8" width="12" height="13" rx="2" />
+            <path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" />
+          </svg>
+          <span>
+            <strong>本文をコピー{features?.bodyCopyEnabled === false ? "（OFF）" : ""}</strong>
+            <small>ページの内容をMarkdownで</small>
+          </span>
         </button>
       </div>
-      <div className="popup-actions">
+      <div className="popup-actions translation-actions">
         <button
+          className="primary-action"
           disabled={busy || tabId === undefined || !features?.translationEnabled}
           onClick={() => void toggleTranslation()}
         >
-          原文下の日本語訳を開始／解除（Option+A）
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <path d="M3 5h12M9 3v2m4 0c-1 6-4 9-9 12m1-9c1 3 3 6 7 8m1 5 5-12 5 12m-8-4h6" />
+          </svg>
+          <span>
+            <strong>原文の下に日本語訳</strong>
+            <small>
+              開始／解除 <kbd>Option+A</kbd>
+            </small>
+          </span>
         </button>
         <button
           disabled={tabId === undefined || !features?.translationEnabled}
@@ -103,7 +134,14 @@ function Popup() {
               void browser.sidePanel.open({ tabId }).catch((error) => setStatus(errorText(error)));
           }}
         >
-          本文をやさしい日本語で読む
+          <svg aria-hidden="true" viewBox="0 0 24 24">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M14 4v16m3-11h1m-1 4h1" />
+          </svg>
+          <span>
+            <strong>やさしい日本語で読む</strong>
+            <small>本文をサイドパネルで翻訳</small>
+          </span>
         </button>
       </div>
       <p role="status">{status}</p>

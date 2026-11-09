@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@wllama/wllama": "3.13.0",
+    "@wllama/wllama-compat": "3.13.0",
     "defuddle": "0.18.1",
     "europa": "6.0.0",
     "react": "19.2.8",

@@ -25,7 +25,8 @@ export function splitTranslationText(text: string): string[] {
       prefix.lastIndexOf("\n"),
     );
     const space = prefix.lastIndexOf(" ");
-    const end = sentence > 600 ? sentence + 1 : space > 600 ? space : 1200;
+    let end = sentence > 600 ? sentence + 1 : space > 600 ? space : 1200;
+    if (/[\uD800-\uDBFF][\uDC00-\uDFFF]/.test(remaining.slice(end - 1, end + 1))) end -= 1;
     chunks.push(remaining.slice(0, end).trim());
     remaining = remaining.slice(end).trim();
   }
@@ -37,7 +38,7 @@ function paragraphs(root: ParentNode): Element[] {
   return Array.from(root.querySelectorAll(BLOCKS)).filter(
     (element) =>
       !element.closest(EXCLUDED) &&
-      !Array.from(element.querySelectorAll(BLOCKS)).some((child) => !child.closest(`[${OWN}]`)) &&
+      !Array.from(element.querySelectorAll(BLOCKS)).some((child) => !child.closest(EXCLUDED)) &&
       sourceText(element).length > 0,
   );
 }
@@ -122,7 +123,7 @@ export function createTranslationController({
     const output = doc.createElement("div");
     output.lang = "ja";
     output.style.cssText =
-      "font:16px/1.7 system-ui,sans-serif;color:#183d30;background:#eef7f0;border-left:3px solid #398863;padding:8px 12px;margin:6px 0 12px;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;";
+      "color-scheme:light dark;box-sizing:border-box;font:16px/1.8 system-ui,sans-serif;color:light-dark(#29262b,#eee7eb);background:light-dark(#faf3f6,#2c2329);border:1px solid light-dark(#e8dce2,#51414a);border-left:3px solid light-dark(#a34869,#d991ae);border-radius:8px;padding:12px 16px;margin:8px 0 16px;box-shadow:0 2px 6px #00000006;white-space:pre-wrap;overflow-wrap:anywhere;text-align:left;";
     output.textContent = text;
     shadow.append(output);
     return { host, output };
@@ -215,11 +216,71 @@ export function createTranslationController({
     const host = doc.createElement("div");
     host.setAttribute(OWN, "selection");
     host.style.cssText =
-      "all:initial;position:fixed;z-index:2147483647;max-width:calc(100vw - 16px);";
+      "all:initial;color-scheme:light dark;position:fixed;z-index:2147483647;max-width:calc(100vw - 16px);";
     const shadow = host.attachShadow({ mode: "open" });
     const style = doc.createElement("style");
-    style.textContent =
-      ":host{color-scheme:light}button{font:15px system-ui;cursor:pointer;border:1px solid #849b8d;border-radius:7px;background:#fff;color:#17382b;padding:8px 12px}button:focus-visible{outline:3px solid #26865f}.panel{box-sizing:border-box;max-height:60vh;overflow:auto;width:320px;max-width:calc(100vw - 16px);font:16px/1.65 system-ui;color:#183d30;background:#f5fbf5;border:1px solid #849b8d;border-radius:8px;padding:12px;box-shadow:0 4px 20px #0003}.text{white-space:pre-wrap;overflow-wrap:anywhere}";
+    style.textContent = `
+      :host {
+        color-scheme: light dark;
+        --ink: light-dark(#29262b, #eee7eb);
+        --surface: light-dark(#fffafb, #2c2329);
+        --border: light-dark(#e8dce2, #51414a);
+        --accent: light-dark(#a34869, #d991ae);
+      }
+      button {
+        box-sizing: border-box;
+        min-width: 44px;
+        min-height: 44px;
+        padding: 9px 14px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        color: var(--ink);
+        font: 600 14px/1.5 system-ui, sans-serif;
+        cursor: pointer;
+        touch-action: manipulation;
+      }
+      button:focus-visible {
+        outline: 3px solid var(--accent);
+        outline-offset: 3px;
+      }
+      .panel {
+        box-sizing: border-box;
+        max-height: 60vh;
+        overflow: auto;
+        overscroll-behavior: contain;
+        width: 320px;
+        max-width: calc(100vw - 16px);
+        padding: 14px 18px 20px;
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        color: var(--ink);
+        background: var(--surface);
+        font: 16px/1.8 system-ui, sans-serif;
+        box-shadow: 0 8px 28px #0000001a, 0 2px 6px #0000000a;
+      }
+      .panel button {
+        display: block;
+        margin: 0 0 12px auto;
+        min-height: 36px;
+        padding: 6px 12px;
+        font-weight: 500;
+      }
+      .text {
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        text-align: left;
+      }
+      @media (hover: hover) and (pointer: fine) {
+        button:hover { background: light-dark(#faedf2, #3e2d36); }
+        button:active:not(:focus-visible) { transform: scale(0.97); }
+        @media (prefers-reduced-motion: no-preference) {
+          button:not(:focus-visible) {
+            transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+          }
+        }
+      }
+    `;
     const button = doc.createElement("button");
     button.type = "button";
     button.textContent = "訳";

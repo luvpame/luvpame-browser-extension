@@ -28,8 +28,9 @@ export function TranslationModelSettings() {
     }
   };
   return (
-    <fieldset>
-      <legend>PLaMo 翻訳</legend>
+    <fieldset className="model-settings">
+      <legend>翻訳モデル</legend>
+      <p className="hint section-description">モデルを選ぶと保存され、次の翻訳から使われます。</p>
       <label htmlFor="translation-model">3つの翻訳機能で使うモデル</label>
       <select
         id="translation-model"
@@ -44,7 +45,7 @@ export function TranslationModelSettings() {
         <option value="0.8b">PLaMo 3 Translate 0.8B（約573MB）</option>
       </select>
       <p className="hint">
-        初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合は同じモデルでCPU処理します。
+        初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合も、同じモデルをCPUで処理します。
       </p>
       <p className="hint">
         原文下の翻訳はOption+Aで開始・解除できます。他の拡張と競合する場合は

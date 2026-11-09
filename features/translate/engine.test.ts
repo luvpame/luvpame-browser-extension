@@ -1,4 +1,9 @@
-import type { LoadModelParams, RawCompletionParams, RawCompletionChunk } from "@wllama/wllama";
+import type {
+  LoadModelParams,
+  RawCompletionParams,
+  RawCompletionChunk,
+  WllamaConfig,
+} from "@wllama/wllama";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type CompletionOptions = RawCompletionParams & { onData: (chunk: RawCompletionChunk) => void };
@@ -6,17 +11,19 @@ const mocks = vi.hoisted(() => ({
   load: vi.fn<(url: string, params: LoadModelParams) => Promise<void>>(),
   complete: vi.fn(),
   exit: vi.fn(),
+  setCompat: vi.fn(),
   gpu: vi.fn(),
-  construct: vi.fn(),
+  construct: vi.fn<(paths: unknown, config?: WllamaConfig) => void>(),
 }));
 vi.mock("@wllama/wllama", () => ({
   Wllama: class {
-    constructor(...args: unknown[]) {
-      mocks.construct(...args);
+    constructor(paths: unknown, config?: WllamaConfig) {
+      mocks.construct(paths, config);
     }
     loadModelFromUrl = mocks.load;
     createCompletion = mocks.complete;
     exit = mocks.exit;
+    setCompat = mocks.setCompat;
   },
 }));
 vi.mock("wxt/browser", () => ({
@@ -67,11 +74,27 @@ describe("translate", () => {
     });
     expect(mocks.construct).toHaveBeenCalledWith(
       { default: "chrome-extension://test/vendor/wllama.wasm" },
-      expect.objectContaining({ allowOffline: true }),
+      expect.objectContaining({
+        allowOffline: true,
+        suppressNativeLog: false,
+        logger: {
+          debug: expect.any(Function),
+          log: expect.any(Function),
+          warn: expect.any(Function),
+          error: expect.any(Function),
+        },
+      }),
     );
     expect(mocks.load).toHaveBeenCalledWith(
       "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
       expect.objectContaining({ n_parallel: 1, n_gpu_layers: 999, cache_idle_slots: false }),
+    );
+    expect(mocks.setCompat).toHaveBeenCalledWith({
+      worker: "chrome-extension://test/vendor/wllama-compat-worker.js",
+      wasm: "chrome-extension://test/vendor/wllama-compat.wasm",
+    });
+    expect(mocks.setCompat.mock.invocationCallOrder[0]).toBeLessThan(
+      mocks.load.mock.invocationCallOrder[0]!,
     );
     expect(mocks.complete).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -112,7 +135,12 @@ describe("translate", () => {
 
   it("releases failed GPU resources and falls back to CPU without changing model", async () => {
     const { translate } = await import("./engine");
-    mocks.load.mockRejectedValueOnce(new Error("GPU unavailable"));
+    mocks.load.mockImplementationOnce(async () => {
+      mocks.construct.mock.calls
+        .at(-1)?.[1]
+        ?.logger?.error("ggml_webgpu: Failed to get a device: unavailable");
+      throw new Error("GPU unavailable");
+    });
     expect(await translate("Hello", "ja", "2b", options())).toEqual({
       text: "翻訳結果",
       device: "cpu",
@@ -139,6 +167,47 @@ describe("translate", () => {
       expect.any(String),
       expect.objectContaining({ n_gpu_layers: 0 }),
     );
+  });
+
+  it.each([
+    [["llama_model_load: offloaded 0/33 layers to GPU"], "cpu"],
+    [["ggml_webgpu: Failed to get an adapter: unavailable"], "cpu"],
+    [["ggml_webgpu: Failed to get a device: unavailable"], "cpu"],
+    [["llama_model_load: offloaded 33/33 layers to GPU"], "gpu"],
+    [["llama_model_load: using device WebGPU0 (browser GPU) (0) - 1024 MiB free"], "gpu"],
+    [
+      [
+        "ggml_webgpu: Failed to get a device: unavailable",
+        "llama_model_load: offloaded 33/33 layers to GPU",
+      ],
+      "gpu",
+    ],
+    [
+      [
+        "llama_model_load: offloaded 33/33 layers to GPU",
+        "ggml_webgpu: Failed to get a device: unavailable",
+      ],
+      "gpu",
+    ],
+    [
+      [
+        "llama_model_load: offloaded 0/33 layers to GPU",
+        "llama_model_load: using device WebGPU0 (browser GPU) (0) - 1024 MiB free",
+      ],
+      "cpu",
+    ],
+    [["unrecognized native log"], "gpu"],
+  ] as const)("reports the loaded device from native logs %j", async (logs, device) => {
+    const { translate } = await import("./engine");
+    mocks.load.mockImplementationOnce(async () => {
+      const logger = mocks.construct.mock.calls.at(-1)?.[1]?.logger;
+      for (const log of logs) logger?.debug(log);
+    });
+    const opts = options();
+    expect(await translate("Hello", "ja", "2b", opts)).toEqual({ text: "翻訳結果", device });
+    expect(opts.onProgress).toHaveBeenCalledWith(`${device.toUpperCase()} で翻訳中…`);
+    expect(mocks.load).toHaveBeenCalledTimes(1);
+    expect(mocks.exit).not.toHaveBeenCalled();
   });
 
   it("rejects queued cancellation promptly and leaves subsequent work usable", async () => {

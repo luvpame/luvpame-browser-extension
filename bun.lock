@@ -6,6 +6,7 @@
       "name": "luvpame-browser-extension",
       "dependencies": {
         "@wllama/wllama": "3.13.0",
+        "@wllama/wllama-compat": "3.13.0",
         "defuddle": "0.18.1",
         "europa": "6.0.0",
         "react": "19.2.8",
@@ -229,6 +230,8 @@
     "@webext-core/match-patterns": ["@webext-core/match-patterns@2.0.0", "", {}, "sha512-EsyMMKfQuSE4rWCjP/TifwvUWlhC/OhiGn5OK3p9F0d57UmtLib0nzguzPKyxM1/kZV7SkE+jYXkE8gsdPRLmw=="],
 
     "@wllama/wllama": ["@wllama/wllama@3.13.0", "", {}, "sha512-ZvoRdQAn+E+18EvQ9qS036gudiI9rbZRBJgG/qNICPPwrA0Y6SMMdbziz/j7K/0WxcbJlhaRraVIYsnEy732NA=="],
+
+    "@wllama/wllama-compat": ["@wllama/wllama-compat@3.13.0", "", {}, "sha512-MSWwyzVXpwkstvIGzOsQ9jlRm8kY5S5J0Gdw4E6M9mXqhgO/5tj+YNfxSoqN1GvsAOwui95JPtwX3hO6VZkbzg=="],
 
     "@wxt-dev/browser": ["@wxt-dev/browser@0.3.0", "", { "dependencies": { "@types/filesystem": "*", "@types/har-format": "*" } }, "sha512-GlqW+uqJP8s/pwqfR1buA2DckxC/mttCudDKBmop5iCerTtPZ6emd9bOAEpUdp3yIVdQCBfHT6iIRKPZsqddjw=="],
 

@@ -45,11 +45,19 @@ function Options() {
     }
   };
   return (
-    <main>
-      <h1>Luvpame 設定</h1>
-      <p className="hint">
-        機能のON/OFFはこのブラウザに保存され、開いているタブにも反映されます。OFFにしてもサイトへのアクセス権限は解除されません。
-      </p>
+    <main className="options">
+      <header className="options-header">
+        <div className="brand">
+          <img src="/icon/48.png" width="48" height="48" alt="" />
+          <div>
+            <p className="brand-name">Luvpame</p>
+            <h1>設定</h1>
+          </div>
+        </div>
+        <p className="hint">
+          機能のON/OFFはこのブラウザに保存され、開いているタブにも反映されます。OFFにしてもサイトへのアクセス権限は解除されません。
+        </p>
+      </header>
       <FeatureToggles features={features} onStatus={setStatus} />
       <TranslationModelSettings />
       <form
@@ -58,9 +66,12 @@ function Options() {
           void save();
         }}
       >
-        <fieldset disabled={!loaded || saving}>
-          <legend>同期する設定</legend>
-          <label htmlFor="template">LGTMテンプレート</label>
+        <fieldset className="template-settings" disabled={!loaded || saving}>
+          <legend>LGTMテンプレート</legend>
+          <p className="hint section-description">
+            GitHubのレビューに挿入する文章です。ブラウザ間で同期します。
+          </p>
+          <label htmlFor="template">テンプレートの本文</label>
           <textarea
             id="template"
             rows={7}
@@ -71,7 +82,9 @@ function Options() {
             {"{{cursor}}"}
             は省略可能です。指定すると、その位置から編集を開始します。レビューは自動送信しません。
           </p>
-          <button type="submit">保存</button>
+          <button className="primary-action" type="submit">
+            テンプレートを保存
+          </button>
         </fieldset>
       </form>
       <p role="status">{status}</p>

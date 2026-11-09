@@ -24,6 +24,24 @@ afterEach(() => {
 });
 
 describe("ページ翻訳", () => {
+  it.each(["hidden", 'aria-hidden="true"', 'contenteditable="true"'])(
+    "除外対象の子要素（%s）があっても可視の本文だけを翻訳し、元のDOMへ戻す",
+    async (attribute) => {
+      document.body.innerHTML = `<div>Hello visible world.<div ${attribute}><div>Excluded child.</div></div></div>`;
+      const original = document.body.innerHTML;
+      const send = vi.fn(async () => success());
+      const controller = mount(send);
+      controller.toggle();
+      await tick();
+      expect(send).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ type: TRANSLATE, text: "Hello visible world." }),
+      );
+      expect(output()).toEqual(["日本語の訳"]);
+      controller.toggle();
+      expect(document.body.innerHTML).toBe(original);
+    },
+  );
+
   it("表とリストの構造を保ち、訳をセルや項目の内側に表示する", async () => {
     document.body.innerHTML =
       "<table><tbody><tr><td>First cell.</td><td>Second cell.</td></tr></tbody></table><ul><li>List item.</li></ul>";
@@ -175,6 +193,16 @@ it("長文を欠落なしで1200文字以下へ分割する", () => {
   expect(chunks.every((chunk) => chunk.length <= 1200)).toBe(true);
   expect(chunks.join(" ")).toBe(text.trim());
   expect(splitTranslationText("a".repeat(2500)).join("")).toBe("a".repeat(2500));
+});
+
+it.each([
+  "x".repeat(1199) + "😀tail",
+  "x".repeat(1199) + "😀" + "x".repeat(1197) + "😀tail",
+  "あ".repeat(2500),
+])("サロゲートペアを壊さず1200文字以下へ分割する（%#）", (text) => {
+  const chunks = splitTranslationText(text);
+  expect(chunks.join("")).toBe(text);
+  expect(chunks.every((chunk) => chunk.length <= 1200 && chunk.isWellFormed())).toBe(true);
 });
 
 it("記事全体を元ページの変更や文字数切捨てなしで抽出する", async () => {

@@ -31,6 +31,9 @@ for (const file of [
   "vendor/wllama.wasm",
   "vendor/wllama-worker.js",
   "vendor/wllama-pthread.js",
+  "vendor/wllama-compat.wasm",
+  "vendor/wllama-compat-worker.js",
+  "vendor/wllama-compat-pthread.js",
   "vendor/wllama-opfs.js",
   manifest.background.service_worker,
   ...manifest.content_scripts.flatMap((script: { js: string[]; css?: string[] }) => [
