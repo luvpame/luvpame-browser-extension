@@ -8,7 +8,7 @@ export const featureLabels = {
   tableEnabled: "GitHub: 表挿入",
   prCopyEnabled: "GitHub: PRコピー",
   htmlPreviewEnabled: "GitHub: HTMLプレビュー",
-  devinRedirectEnabled: "GitHub: Devin系リンク",
+  devinRedirectEnabled: "GitHub: Devin Reviewリンク",
   copyMarkdownButtonEnabled: "Notion: ページ内本文コピーボタン",
   copyTitleHoverEnabled: "Notion: タイトルホバー操作",
   headingMarkerEnabled: "Notion: 見出しマーカー",

@@ -1,14 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   DEVIN_REDIRECT_CONTAINER_ID,
   DEVIN_REDIRECT_ICON_PATH,
-  DEVIN_REDIRECT_STYLE_ID,
-  buildDeepwikiUrl,
-  buildDevinReviewUrl,
-  buildDevinWikiUrl,
   ensureDevinRedirectButtons,
-  getRepoRedirectContext,
   removeDevinRedirectButtons,
 } from "../lib/github-devin-redirect";
 
@@ -16,113 +11,52 @@ describe("github-devin-redirect", () => {
   beforeEach(() => {
     document.head.innerHTML = "";
     document.body.innerHTML = "";
-    vi.restoreAllMocks();
   });
 
-  it("builds DeepWiki, Devin Wiki, and Devin Review URLs", () => {
-    expect(buildDeepwikiUrl({ owner: "luvpame", repo: "demo" })).toBe(
-      "https://deepwiki.com/luvpame/demo",
-    );
-    expect(buildDevinWikiUrl({ owner: "luvpame", repo: "demo" })).toBe(
-      "https://app.devin.ai/wiki/luvpame/demo",
-    );
-    expect(buildDevinReviewUrl({ owner: "luvpame", repo: "demo", pullNumber: "123" })).toBe(
-      "https://app.devin.ai/review/luvpame/demo/pull/123",
-    );
-  });
+  it("shows a single accessible icon linking directly to Review in a new tab", () => {
+    const url = new URL("https://github.com/luvpame/demo/pull/123/files");
+    expect(ensureDevinRedirectButtons(document, url)).toBe(true);
+    expect(ensureDevinRedirectButtons(document, url)).toBe(false);
 
-  it("extracts repository context from GitHub repository URLs", () => {
-    document.head.innerHTML = `
-      <meta name="octolytics-dimension-repository_public" content="false">
-    `;
-
-    expect(getRepoRedirectContext(new URL("https://github.com/luvpame/demo/pull/123"))).toEqual({
-      owner: "luvpame",
-      repo: "demo",
-      isPrivate: true,
-      isPullRequest: true,
-      pullNumber: "123",
-    });
-  });
-
-  it("ignores non-repository GitHub URLs", () => {
-    expect(getRepoRedirectContext(new URL("https://github.com/settings/profile"))).toBeNull();
-  });
-
-  it("adds redirect buttons once and uses private wiki URLs for private repos", () => {
-    document.head.innerHTML = `
-      <meta name="octolytics-dimension-repository_public" content="false">
-    `;
-
-    expect(ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo"))).toBe(
-      true,
-    );
-    expect(ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo"))).toBe(
-      false,
-    );
-
-    const buttons = [...document.querySelectorAll<HTMLButtonElement>("[data-target]")];
-    expect(buttons.map((button) => button.textContent)).toEqual(["DeepWiki"]);
-    expect(buttons[0]?.dataset.url).toBe("https://app.devin.ai/wiki/luvpame/demo");
+    const container = document.getElementById(DEVIN_REDIRECT_CONTAINER_ID)!;
+    const link = container.querySelector("a")!;
     expect(document.querySelectorAll(`#${DEVIN_REDIRECT_CONTAINER_ID}`)).toHaveLength(1);
+    expect(container.querySelectorAll("a")).toHaveLength(1);
+    expect(container.querySelector("button")).toBeNull();
+    expect(link.href).toBe("https://app.devin.ai/review/luvpame/demo/pull/123");
+    expect(link.target).toBe("_blank");
+    expect(link.rel).toContain("noopener");
+    expect(link.getAttribute("aria-label")).toBe("Devin Review（別タブで開く）");
+    expect(link.querySelector("img")?.src).toContain(DEVIN_REDIRECT_ICON_PATH);
   });
 
-  it("keeps redirect actions collapsed by default", () => {
-    ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo"));
-
-    const container = document.getElementById(DEVIN_REDIRECT_CONTAINER_ID);
-    expect(container?.dataset.expanded).toBe("false");
-    expect(container?.classList.contains(`${DEVIN_REDIRECT_CONTAINER_ID}-collapsed`)).toBe(true);
-    expect(container?.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")).toBe(
-      "false",
+  it("updates the destination when navigating between PRs", () => {
+    ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo/pull/123"));
+    expect(
+      ensureDevinRedirectButtons(document, new URL("https://github.com/other/repo/pull/456")),
+    ).toBe(true);
+    expect(document.querySelector("a")?.href).toBe(
+      "https://app.devin.ai/review/other/repo/pull/456",
     );
   });
 
-  it("uses the Devin icon for the toggle button", () => {
-    ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo"));
-
-    const toggleButton = document.querySelector<HTMLButtonElement>("[data-role='toggle']");
-    const icon = toggleButton?.querySelector<HTMLImageElement>("img");
-    expect(toggleButton?.textContent?.trim()).toBe("");
-    expect(toggleButton?.querySelector("svg")).toBeNull();
-    expect(icon?.src).toContain(DEVIN_REDIRECT_ICON_PATH);
-  });
-
-  it("adds motion styles for hover, click, and menu expansion", () => {
+  it.each([
+    "https://github.com/luvpame/demo",
+    "https://github.com/luvpame/demo/issues/123",
+    "https://github.com/luvpame/demo/pulls",
+    "https://github.com/luvpame/demo/pull/new",
+    "https://github.com/luvpame/demo/pull/123abc",
+    "https://github.com/settings/profile",
+    "https://example.com/luvpame/demo/pull/123",
+  ])("removes the icon outside PR pages: %s", (url) => {
     ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo/pull/123"));
-
-    const styleText = document.getElementById(DEVIN_REDIRECT_STYLE_ID)?.textContent ?? "";
-    expect(styleText).toContain("transition:");
-    expect(styleText).toContain("transform:");
-    expect(styleText).toContain("animation:");
-    expect(styleText).toContain("@keyframes github-enhancer-devin-action-in");
-    expect(styleText).toContain("@media (prefers-reduced-motion: reduce)");
+    expect(ensureDevinRedirectButtons(document, new URL(url))).toBe(false);
+    expect(document.getElementById(DEVIN_REDIRECT_CONTAINER_ID)).toBeNull();
   });
 
-  it("adds Devin Review on pull request pages", () => {
+  it("removes the icon when disabled", () => {
     ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo/pull/123"));
-
-    expect(
-      [...document.querySelectorAll<HTMLButtonElement>("[data-target]")].map((button) => ({
-        label: button.textContent,
-        url: button.dataset.url,
-      })),
-    ).toEqual([
-      {
-        label: "DeepWiki",
-        url: "https://deepwiki.com/luvpame/demo",
-      },
-      {
-        label: "Devin Review",
-        url: "https://app.devin.ai/review/luvpame/demo/pull/123",
-      },
-    ]);
-  });
-
-  it("removes inserted buttons", () => {
-    ensureDevinRedirectButtons(document, new URL("https://github.com/luvpame/demo"));
     removeDevinRedirectButtons(document);
-
     expect(document.getElementById(DEVIN_REDIRECT_CONTAINER_ID)).toBeNull();
   });
 });

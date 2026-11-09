@@ -41,7 +41,7 @@ describe("github content helpers", () => {
     expect(document.querySelector(".github-enhancer-html-preview-button")).toBeNull();
   });
 
-  it("adds Devin redirect buttons on repository pages", () => {
+  it("shows the Review link only on PR pages and respects the setting", () => {
     document.body.innerHTML = "<main><h1><bdi>demo</bdi></h1></main>";
 
     applySettings(
@@ -53,7 +53,21 @@ describe("github content helpers", () => {
       new URL("https://github.com/luvpame/demo"),
     );
 
-    expect(document.querySelector("[data-target='deepwiki']")?.textContent).toBe("DeepWiki");
+    expect(document.getElementById("github-enhancer-devin-redirect")).toBeNull();
+
+    const url = new URL("https://github.com/luvpame/demo/pull/123");
+    applySettings(
+      { prCopyEnabled: false, htmlPreviewEnabled: false, devinRedirectEnabled: true },
+      url,
+    );
+    expect(document.querySelector("#github-enhancer-devin-redirect a")?.getAttribute("href")).toBe(
+      "https://app.devin.ai/review/luvpame/demo/pull/123",
+    );
+    applySettings(
+      { prCopyEnabled: false, htmlPreviewEnabled: false, devinRedirectEnabled: false },
+      url,
+    );
+    expect(document.getElementById("github-enhancer-devin-redirect")).toBeNull();
   });
 
   it("extracts the pull request head ref from GitHub sha2 URLs", () => {
