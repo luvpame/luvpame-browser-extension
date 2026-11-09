@@ -121,9 +121,14 @@ async function runTranslation(
   const safeText = text.replaceAll("<|", "<\u200b|");
   const prompt =
     "<|plamo:tag|>dataset<|plamo:msg|>translation" +
+    (target === "ja-easy"
+      ? "<|plamo:tag|>context<|plamo:msg|>読者は日本語学習者です。短い文と日常の言葉を使います。内容は省略・要約しません。"
+      : "") +
     "<|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>" +
     safeText +
-    `<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>${target}<|plamo:msg|>`;
+    "<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja" +
+    (target === "ja-easy" ? "<|plamo:key|>form<|plamo:val|>polite" : "") +
+    "<|plamo:msg|>";
   let translated = "";
   let finishReason: string | null = null;
   await loaded.runtime.createCompletion({

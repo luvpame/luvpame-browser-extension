@@ -7,6 +7,7 @@ import {
   ARTICLE_REQUEST,
   PAGE_TRANSLATION,
   TRANSLATION_PROGRESS,
+  TRANSLATION_READY,
 } from "../features/translate/shared";
 
 const controller = vi.hoisted(() => ({
@@ -55,6 +56,16 @@ const startContentScript = () => {
 afterEach(() => {
   ctx.notifyInvalidated();
   vi.restoreAllMocks();
+});
+
+it("confirms the receiver synchronously while settings remain pending", () => {
+  vi.spyOn(browser.storage.local, "get").mockImplementation(() => new Promise(() => {}));
+  startContentScript();
+  const respond = vi.fn();
+  expect(listener({ type: TRANSLATION_READY }, sender, respond)).toBeUndefined();
+  expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true });
+  expect(controller.toggle).not.toHaveBeenCalled();
+  expect(extractArticle).not.toHaveBeenCalled();
 });
 
 it.each([PAGE_TRANSLATION, ARTICLE_REQUEST])(
@@ -192,6 +203,7 @@ it("ignores foreign senders, content senders and malformed messages", () => {
   const respond = vi.fn();
   for (const { message, source } of [
     { message: { type: PAGE_TRANSLATION }, source: { id: "other-extension" } },
+    { message: { type: TRANSLATION_READY }, source: { id: "other-extension" } },
     {
       message: { type: PAGE_TRANSLATION },
       source: {
@@ -217,6 +229,8 @@ it("ignores foreign senders, content senders and malformed messages", () => {
     { message: { type: "unknown" }, source: sender },
   ]) {
     expect(listener(message, source, respond)).toBeUndefined();
+    if ("tab" in source)
+      expect(listener({ type: TRANSLATION_READY }, source, respond)).toBeUndefined();
   }
   expect(respond).not.toHaveBeenCalled();
   expect(controller.toggle).not.toHaveBeenCalled();

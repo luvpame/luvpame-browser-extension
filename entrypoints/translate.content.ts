@@ -7,6 +7,7 @@ import {
   ARTICLE_REQUEST,
   PAGE_TRANSLATION,
   TRANSLATION_PROGRESS,
+  TRANSLATION_READY,
 } from "../features/translate/shared";
 
 export default defineContentScript({
@@ -35,6 +36,10 @@ export default defineContentScript({
       respond: (response: unknown) => void,
     ) => {
       if (sender.id !== browser.runtime.id || sender.tab || !isRecord(message)) return;
+      if (message.type === TRANSLATION_READY) {
+        respond({ ok: true });
+        return;
+      }
       if (message.type === PAGE_TRANSLATION || message.type === ARTICLE_REQUEST) {
         void ready.then((result) => {
           if (ctx.isInvalid) return;

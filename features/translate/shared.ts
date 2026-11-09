@@ -4,6 +4,7 @@ export const TRANSLATE = "luvpame:translate";
 export const CANCEL_TRANSLATION = "luvpame:cancel-translation";
 export const TRANSLATION_PROGRESS = "luvpame:translation-progress";
 export const PAGE_TRANSLATION = "luvpame:page-translation";
+export const TRANSLATION_READY = "luvpame:translation-ready";
 export const ARTICLE_REQUEST = "luvpame:article-request";
 export const OFFSCREEN_TRANSLATE = "luvpame:offscreen-translate";
 export const OFFSCREEN_CANCEL = "luvpame:offscreen-cancel-translation";

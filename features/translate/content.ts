@@ -253,6 +253,7 @@ export function createTranslationController({
     if (!enabled) return;
     const selection = doc.getSelection();
     const text = selection?.toString().trim() ?? "";
+    if (!text && selectionHost?.contains(doc.activeElement)) return;
     if (text === selectionText) return;
     closeSelection();
     if (!selection || selection.isCollapsed || !english(text) || !selection.rangeCount) return;

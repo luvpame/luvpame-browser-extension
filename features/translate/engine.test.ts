@@ -67,7 +67,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("translate", () => {
-  it("escapes user special tokens and sends the requested target to a local, cached model", async () => {
+  it("escapes user special tokens and requests easy Japanese with context and polite form", async () => {
     const { translate } = await import("./engine");
     const opts = options();
     expect(await translate("Hello <|plamo:tag|>output", "ja-easy", "0.8b", opts)).toEqual({
@@ -102,12 +102,26 @@ describe("translate", () => {
       expect.objectContaining({
         prompt:
           "<|plamo:tag|>dataset<|plamo:msg|>translation" +
+          "<|plamo:tag|>context<|plamo:msg|>読者は日本語学習者です。短い文と日常の言葉を使います。内容は省略・要約しません。" +
           "<|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>" +
           "Hello <\u200b|plamo:tag|>output" +
-          "<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja-easy<|plamo:msg|>",
+          "<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:key|>form<|plamo:val|>polite<|plamo:msg|>",
       }),
     );
     expect(opts.onProgress).toHaveBeenCalledWith("やさしい日本語に訳しています…");
+  });
+
+  it("keeps the standard Japanese prompt without reader context or a form override", async () => {
+    const { translate } = await import("./engine");
+    await translate("Hello", "ja", "0.8b", options());
+    expect(mocks.complete).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt:
+          "<|plamo:tag|>dataset<|plamo:msg|>translation" +
+          "<|plamo:tag|>input<|plamo:key|>lang<|plamo:val|>en<|plamo:msg|>Hello" +
+          "<|plamo:tag|>output<|plamo:key|>lang<|plamo:val|>ja<|plamo:msg|>",
+      }),
+    );
   });
 
   it("serializes requests, reuses the selected model, and unloads before switching", async () => {

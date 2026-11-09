@@ -5,6 +5,7 @@ import { browser } from "wxt/browser";
 import { watchFeatures } from "../../lib/features";
 import { isRecord, errorText } from "../../lib/copy-protocol";
 import { splitTranslationText } from "./content";
+import { sendPageTranslationMessage } from "./page-bridge";
 import {
   ARTICLE_REQUEST,
   CANCEL_TRANSLATION,
@@ -39,7 +40,7 @@ export function Sidepanel() {
           setStatus("HTTP/HTTPSの通常のWebページを開いてください。");
           return;
         }
-        const article: unknown = await browser.tabs.sendMessage(tab.id, { type: ARTICLE_REQUEST });
+        const article: unknown = await sendPageTranslationMessage(tab.id, ARTICLE_REQUEST);
         if (disposed || version !== queryVersion) return;
         if (
           !isRecord(article) ||

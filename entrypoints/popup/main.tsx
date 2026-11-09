@@ -5,6 +5,7 @@ import { watchFeatures, type Features } from "../../lib/features";
 import { COPY_REQUEST, type CopyKind, isRecord, errorText } from "../../lib/copy-protocol";
 import { FeatureToggles } from "../../lib/feature-toggles";
 import { PAGE_TRANSLATION } from "../../features/translate/shared";
+import { sendPageTranslationMessage } from "../../features/translate/page-bridge";
 import "../../lib/ui.css";
 
 function Popup() {
@@ -49,7 +50,7 @@ function Popup() {
     if (tabId === undefined || busy) return;
     setBusy(true);
     try {
-      const result: unknown = await browser.tabs.sendMessage(tabId, { type: PAGE_TRANSLATION });
+      const result: unknown = await sendPageTranslationMessage(tabId, PAGE_TRANSLATION);
       if (!isRecord(result) || result.ok !== true)
         throw new Error(
           isRecord(result) && typeof result.error === "string"

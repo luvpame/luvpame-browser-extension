@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
-import type { Browser } from "wxt/browser";
+import type { Browser, browser } from "wxt/browser";
 const api = vi.hoisted(() => {
   const runtimeError: { lastError?: { message: string } } = {};
   return {
@@ -14,6 +14,8 @@ const api = vi.hoisted(() => {
     },
     storage: { local: { get: vi.fn() }, onChanged: { addListener: vi.fn() } },
     tabs: { sendMessage: vi.fn(), query: vi.fn(), onRemoved: { addListener: vi.fn() } },
+    scripting: { executeScript: vi.fn() },
+    notifications: { create: vi.fn() },
     commands: { onCommand: { addListener: vi.fn() } },
     contextMenus: {
       removeAll: vi.fn(),
@@ -28,7 +30,14 @@ const api = vi.hoisted(() => {
 vi.mock("wxt/browser", () => ({ browser: api }));
 vi.mock("../../lib/offscreen", () => ({ ensureOffscreen: vi.fn(async () => {}) }));
 import { registerTranslationBackground } from "./background";
-import { TRANSLATE, OFFSCREEN_TRANSLATE, isTranslationRequest } from "./shared";
+import {
+  TRANSLATE,
+  CANCEL_TRANSLATION,
+  OFFSCREEN_TRANSLATE,
+  OFFSCREEN_CANCEL,
+  isTranslationRequest,
+  TRANSLATION_READY,
+} from "./shared";
 
 const request = { type: TRANSLATE, sessionId: "session-1", text: "Hello world", target: "ja" };
 const sender = { id: "test-extension", tab: { id: 7 }, frameId: 0, url: "https://example.com" };
@@ -40,7 +49,15 @@ beforeEach(() => {
   menus.clear();
   api.runtime.lastError = undefined;
   api.storage.local.get.mockResolvedValue({});
-  api.contextMenus.removeAll.mockImplementation(async () => menus.clear());
+  api.scripting.executeScript.mockResolvedValue([]);
+  api.tabs.sendMessage.mockImplementation(async (_tabId, message) =>
+    message.type === TRANSLATION_READY ? { ok: true } : undefined,
+  );
+  api.notifications.create.mockResolvedValue("notification");
+  api.contextMenus.removeAll.mockImplementation((callback: () => void) => {
+    menus.clear();
+    queueMicrotask(callback);
+  });
   api.contextMenus.create.mockImplementation(
     (menu: Browser.contextMenus.CreateProperties, callback?: () => void) => {
       const id = menu.id ?? "missing-id";
@@ -55,10 +72,18 @@ beforeEach(() => {
     },
   );
   api.contextMenus.update.mockImplementation(
-    async (id: string | number, properties: Omit<Browser.contextMenus.CreateProperties, "id">) => {
-      const menu = menus.get(id);
-      if (!menu) throw new Error(`Cannot find menu item with id ${id}`);
-      menus.set(id, { ...menu, ...properties });
+    (
+      id: string | number,
+      properties: Parameters<typeof browser.contextMenus.update>[1],
+      callback: () => void,
+    ) => {
+      queueMicrotask(() => {
+        const menu = menus.get(id);
+        api.runtime.lastError = menu ? undefined : { message: "Menu not found" };
+        if (menu) menus.set(id, { ...menu, ...properties });
+        callback();
+        api.runtime.lastError = undefined;
+      });
     },
   );
   api.runtime.sendMessage.mockImplementation(async (message) => ({
@@ -74,9 +99,16 @@ afterEach(async () => {
   vi.restoreAllMocks();
 });
 
-it("restores missing menus when the worker starts without install or startup events", async () => {
+it("creates static menus synchronously before settings resolve", async () => {
+  let finishRead: (value: { translationEnabled: boolean }) => void = () => {};
+  api.storage.local.get.mockReturnValueOnce(
+    new Promise((resolve) => {
+      finishRead = resolve;
+    }),
+  );
   registerTranslationBackground();
-  await vi.waitFor(() => expect([...menus.keys()]).toEqual(menuIds));
+  expect(api.contextMenus.create.mock.calls.map(([menu]) => menu.id)).toEqual(menuIds);
+  expect(api.storage.local.get).not.toHaveBeenCalled();
   expect([...menus.values()]).toEqual([
     {
       id: menuIds[0],
@@ -93,55 +125,40 @@ it("restores missing menus when the worker starts without install or startup eve
       enabled: true,
     },
   ]);
-  expect(api.contextMenus.removeAll).not.toHaveBeenCalled();
+  await vi.waitFor(() => expect(api.storage.local.get).toHaveBeenCalledOnce());
+  expect(api.contextMenus.update).not.toHaveBeenCalled();
+  finishRead({ translationEnabled: false });
+  await vi.waitFor(() =>
+    expect([...menus.values()].map((menu) => menu.enabled)).toEqual([false, false]),
+  );
+  expect(api.contextMenus.removeAll).toHaveBeenCalledOnce();
 });
 
-it("reuses existing menus across overlapping installation and startup events", async () => {
+it("replaces stale menus synchronously during installation before applying settings", async () => {
   for (const id of menuIds) menus.set(id, { id, title: "old", contexts: ["page"] });
   registerTranslationBackground();
   api.runtime.onInstalled.addListener.mock.calls[0]?.[0]();
+  expect(api.contextMenus.create).toHaveBeenCalledTimes(4);
   api.runtime.onStartup.addListener.mock.calls[0]?.[0]();
-  await vi.waitFor(() => expect(api.contextMenus.update).toHaveBeenCalledTimes(6));
-  expect([...menus.values()].map((menu) => menu.contexts)).toEqual([["all"], ["all"]]);
-  expect(api.contextMenus.create).not.toHaveBeenCalled();
-  expect(api.contextMenus.removeAll).not.toHaveBeenCalled();
+  await vi.waitFor(() => {
+    expect([...menus.values()].map((menu) => menu.contexts)).toEqual([["all"], ["all"]]);
+    expect(api.storage.local.get).toHaveBeenCalledTimes(3);
+  });
+  expect([...menus.keys()]).toEqual(menuIds);
+  expect(api.contextMenus.removeAll).toHaveBeenCalledTimes(2);
+  expect(api.contextMenus.removeAll.mock.invocationCallOrder[0]).toBeLessThan(
+    api.contextMenus.create.mock.invocationCallOrder[0]!,
+  );
 });
 
-it("keeps the latest feature change when the initial read and menu creation are still pending", async () => {
+it("keeps the latest feature change while callback-only creation and settings are pending", async () => {
+  let finishCreate: () => void = () => {};
   let finishRead: (value: { translationEnabled: boolean }) => void = () => {};
   api.storage.local.get.mockReturnValueOnce(
     new Promise((resolve) => {
       finishRead = resolve;
     }),
   );
-  registerTranslationBackground();
-  await vi.waitFor(() => expect(api.storage.local.get).toHaveBeenCalledOnce());
-  const changed = api.storage.onChanged.addListener.mock.calls[0]?.[0];
-  changed({ translationEnabled: { newValue: false } }, "local");
-  api.runtime.onInstalled.addListener.mock.calls[0]?.[0]();
-  api.runtime.onStartup.addListener.mock.calls[0]?.[0]();
-  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
-  finishRead({ translationEnabled: true });
-  await vi.waitFor(() => {
-    expect(menus.size).toBe(2);
-    expect([...menus.values()].every((menu) => menu.enabled === false)).toBe(true);
-  });
-  changed({ translationEnabled: { newValue: true } }, "local");
-  api.storage.local.get.mockResolvedValue({ translationEnabled: true });
-  await vi.waitFor(() =>
-    expect([...menus.values()].every((menu) => menu.enabled === true)).toBe(true),
-  );
-  expect(api.contextMenus.create).toHaveBeenCalledTimes(2);
-  expect(api.contextMenus.removeAll).not.toHaveBeenCalled();
-  const updates = api.contextMenus.update.mock.calls.length;
-  changed({ urlCopyEnabled: { newValue: false } }, "local");
-  changed({ translationEnabled: { newValue: false } }, "sync");
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(api.contextMenus.update).toHaveBeenCalledTimes(updates);
-});
-
-it("waits for menu creation callbacks before applying a newer disabled setting", async () => {
-  let finishCreate: () => void = () => {};
   api.contextMenus.create.mockImplementationOnce(
     (menu: Browser.contextMenus.CreateProperties, callback: () => void) => {
       finishCreate = () => {
@@ -152,47 +169,54 @@ it("waits for menu creation callbacks before applying a newer disabled setting",
     },
   );
   registerTranslationBackground();
-  await vi.waitFor(() => expect(api.contextMenus.create).toHaveBeenCalledOnce());
-  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
-  api.storage.onChanged.addListener.mock.calls[0]?.[0](
-    { translationEnabled: { newValue: false } },
-    "local",
-  );
+  const changed = api.storage.onChanged.addListener.mock.calls[0]?.[0];
+  changed({ translationEnabled: { newValue: false } }, "local");
   await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(api.contextMenus.update).not.toHaveBeenCalled();
+  expect(api.storage.local.get).not.toHaveBeenCalled();
   finishCreate();
-  await vi.waitFor(() => {
-    expect(menus.size).toBe(2);
-    expect([...menus.values()].every((menu) => menu.enabled === false)).toBe(true);
-  });
+  await vi.waitFor(() => expect(api.storage.local.get).toHaveBeenCalledOnce());
+  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
+  finishRead({ translationEnabled: true });
+  await vi.waitFor(() =>
+    expect([...menus.values()].map((menu) => menu.enabled)).toEqual([false, false]),
+  );
+  api.storage.local.get.mockResolvedValue({ translationEnabled: true });
+  changed({ translationEnabled: { newValue: true } }, "local");
+  await vi.waitFor(() =>
+    expect([...menus.values()].map((menu) => menu.enabled)).toEqual([true, true]),
+  );
+  const synchronizations = api.contextMenus.update.mock.calls.length;
+  changed({ urlCopyEnabled: { newValue: false } }, "local");
+  changed({ translationEnabled: { newValue: false } }, "sync");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(api.contextMenus.update).toHaveBeenCalledTimes(synchronizations);
   expect(api.contextMenus.create).toHaveBeenCalledTimes(2);
 });
 
-it("reports menu creation callback failures and allows the next synchronization to recover", async () => {
+it("reports callback update failures and recovers at the next synchronization", async () => {
   const report = vi.spyOn(console, "error").mockImplementation(() => {});
-  api.contextMenus.create.mockImplementationOnce(
-    (menu: Browser.contextMenus.CreateProperties, callback: () => void) => {
+  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
+  api.contextMenus.update.mockImplementationOnce(
+    (
+      _id: string | number,
+      _properties: Parameters<typeof browser.contextMenus.update>[1],
+      callback: () => void,
+    ) => {
       queueMicrotask(() => {
-        api.runtime.lastError = { message: "Menu creation failed" };
+        api.runtime.lastError = { message: "Menu update failed" };
         callback();
         api.runtime.lastError = undefined;
       });
-      return menu.id ?? "missing-id";
     },
   );
   registerTranslationBackground();
-  await vi.waitFor(() => expect(report).toHaveBeenCalledWith(new Error("Menu creation failed")));
-  api.runtime.onStartup.addListener.mock.calls[0]?.[0]();
-  await vi.waitFor(() => expect([...menus.keys()]).toEqual(menuIds));
-  expect(api.contextMenus.removeAll).not.toHaveBeenCalled();
-});
-
-it("reports update failures without trying to recreate an existing menu", async () => {
-  const report = vi.spyOn(console, "error").mockImplementation(() => {});
-  for (const id of menuIds) menus.set(id, { id, title: "existing" });
-  api.contextMenus.update.mockRejectedValueOnce(new Error("Menu update failed"));
-  registerTranslationBackground();
   await vi.waitFor(() => expect(report).toHaveBeenCalledWith(new Error("Menu update failed")));
-  expect(api.contextMenus.create).not.toHaveBeenCalled();
+  expect(menus.get(menuIds[0] ?? "")?.enabled).toBe(true);
+  api.runtime.onStartup.addListener.mock.calls[0]?.[0]();
+  await vi.waitFor(() =>
+    expect([...menus.values()].map((menu) => menu.enabled)).toEqual([false, false]),
+  );
 });
 
 it("rejects invalid targets, oversized input and unbounded session IDs", () => {
@@ -218,6 +242,38 @@ it("uses the persisted model and scopes content requests to the sender tab", asy
   );
 });
 
+it.each([undefined, { id: 7 }])(
+  "accepts sidepanel translation and cancellation with tab metadata %j",
+  async (tab) => {
+    registerTranslationBackground();
+    const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+    const panelSender = {
+      id: "test-extension",
+      url: api.runtime.getURL("/sidepanel.html"),
+      tab,
+      frameId: 0,
+    };
+    const respond = vi.fn();
+    expect(listener(request, panelSender, respond)).toBe(true);
+    await vi.waitFor(() =>
+      expect(respond).toHaveBeenCalledWith(expect.objectContaining({ ok: true })),
+    );
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: OFFSCREEN_TRANSLATE, sessionId: "panel:session-1" }),
+    );
+    api.offscreen.hasDocument.mockResolvedValue(true);
+    const cancelled = vi.fn();
+    listener({ type: CANCEL_TRANSLATION, sessionId: request.sessionId }, panelSender, cancelled);
+    expect(cancelled).toHaveBeenCalledWith({ ok: true });
+    await vi.waitFor(() =>
+      expect(api.runtime.sendMessage).toHaveBeenCalledWith({
+        type: OFFSCREEN_CANCEL,
+        sessionId: "panel:session-1",
+      }),
+    );
+  },
+);
+
 it("never starts inference for a disabled feature or forged sender", async () => {
   registerTranslationBackground();
   const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
@@ -231,6 +287,15 @@ it("never starts inference for a disabled feature or forged sender", async () =>
       respond,
     ),
   ).toBeUndefined();
+  for (const invalidSender of [
+    { ...sender, url: api.runtime.getURL("/popup.html") },
+    { ...sender, url: api.runtime.getURL("/sidepanel.html?forged") },
+    { ...sender, url: api.runtime.getURL("/sidepanel.html"), id: "other-extension" },
+    { id: "test-extension", url: "https://example.com" },
+  ]) {
+    expect(listener(request, invalidSender, respond)).toBeUndefined();
+  }
+  expect(respond).not.toHaveBeenCalled();
   api.storage.local.get.mockResolvedValue({ translationEnabled: false });
   const result = await new Promise((resolve) => listener(request, sender, resolve));
   expect(result).toMatchObject({ ok: false, error: "翻訳機能はOFFです。" });
@@ -264,8 +329,82 @@ it("offers both context menus and opens the native sidepanel directly from its m
   expect(api.sidePanel.open).toHaveBeenCalledWith({ tabId: 7 });
   click({ menuItemId: "luvpame:page-translation" }, { id: 7 });
   await vi.waitFor(() =>
-    expect(api.tabs.sendMessage).toHaveBeenCalledWith(7, {
-      type: "luvpame:page-translation",
-    }),
+    expect(api.tabs.sendMessage).toHaveBeenCalledWith(
+      7,
+      {
+        type: "luvpame:page-translation",
+      },
+      { frameId: 0 },
+    ),
   );
+});
+
+it("toggles the active page from the keyboard command without reinjecting", async () => {
+  api.tabs.query.mockResolvedValue([{ id: 7 }]);
+  api.tabs.sendMessage.mockResolvedValue({ ok: true, active: true });
+  registerTranslationBackground();
+  const command = api.commands.onCommand.addListener.mock.calls[0]?.[0];
+  command("toggle-page-translation");
+  await vi.waitFor(() =>
+    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(
+      7,
+      { type: "luvpame:page-translation" },
+      { frameId: 0 },
+    ),
+  );
+  expect(api.scripting.executeScript).not.toHaveBeenCalled();
+  expect(api.notifications.create).not.toHaveBeenCalled();
+});
+
+it("recovers the keyboard command on an existing page after extension reload", async () => {
+  api.tabs.query.mockResolvedValue([{ id: 7 }]);
+  api.tabs.sendMessage
+    .mockRejectedValueOnce(
+      new Error("Could not establish connection. Receiving end does not exist."),
+    )
+    .mockResolvedValueOnce({ ok: true })
+    .mockResolvedValueOnce({ ok: true, active: true });
+  registerTranslationBackground();
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("toggle-page-translation");
+  await vi.waitFor(() => expect(api.tabs.sendMessage).toHaveBeenCalledTimes(3));
+  expect(api.scripting.executeScript).toHaveBeenCalledExactlyOnceWith({
+    target: { tabId: 7, frameIds: [0] },
+    files: ["/content-scripts/translate.js"],
+  });
+  expect(api.notifications.create).not.toHaveBeenCalled();
+});
+
+it("notifies command failures without repeating an operation that may have been delivered", async () => {
+  api.tabs.query.mockResolvedValue([{ id: 7 }]);
+  api.tabs.sendMessage.mockRejectedValue(
+    new Error("The message port closed before a response was received."),
+  );
+  registerTranslationBackground();
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("toggle-page-translation");
+  await vi.waitFor(() =>
+    expect(api.notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "翻訳を開始できません",
+        message: expect.stringContaining("The message port closed before a response was received."),
+      }),
+    ),
+  );
+  expect(api.tabs.sendMessage).toHaveBeenCalledOnce();
+  expect(api.scripting.executeScript).not.toHaveBeenCalled();
+});
+
+it("notifies the keyboard command when a content receiver rejects translation", async () => {
+  api.tabs.query.mockResolvedValue([{ id: 7 }]);
+  api.tabs.sendMessage
+    .mockResolvedValueOnce({ ok: true })
+    .mockResolvedValueOnce({ ok: false, error: "翻訳機能はOFFです。" });
+  registerTranslationBackground();
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("toggle-page-translation");
+  await vi.waitFor(() =>
+    expect(api.notifications.create).toHaveBeenCalledWith(
+      expect.objectContaining({ message: expect.stringContaining("翻訳機能はOFFです。") }),
+    ),
+  );
+  expect(api.tabs.sendMessage).toHaveBeenCalledTimes(2);
+  expect(api.scripting.executeScript).not.toHaveBeenCalled();
 });

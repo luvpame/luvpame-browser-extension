@@ -3,6 +3,7 @@ import { errorText, isRecord } from "../../lib/copy-protocol";
 import { readFeatures } from "../../lib/features";
 import { ensureOffscreen } from "../../lib/offscreen";
 import { readTranslationModel } from "./settings";
+import { sendPageTranslationMessage } from "./page-bridge";
 import {
   TRANSLATE,
   CANCEL_TRANSLATION,
@@ -36,7 +37,7 @@ export const registerTranslationBackground = (): void => {
     }
     const content =
       sender.tab?.id !== undefined && sender.frameId === 0 && /^https?:\/\//.test(sender.url ?? "");
-    const panel = !sender.tab && sender.url === browser.runtime.getURL("/sidepanel.html");
+    const panel = sender.url === browser.runtime.getURL("/sidepanel.html");
     if (!content && !panel) return;
     if (!isSessionId(message.sessionId)) return;
     const sessionId = `${content ? `tab-${sender.tab?.id}` : "panel"}:${message.sessionId}`;
@@ -93,7 +94,7 @@ export const registerTranslationBackground = (): void => {
   const toggle = async (tabId: number) => {
     try {
       if (!(await readFeatures()).translationEnabled) throw new Error("翻訳機能はOFFです。");
-      const result: unknown = await browser.tabs.sendMessage(tabId, { type: PAGE_TRANSLATION });
+      const result: unknown = await sendPageTranslationMessage(tabId, PAGE_TRANSLATION);
       if (isRecord(result) && result.ok === false) throw new Error(String(result.error));
     } catch (error) {
       await browser.notifications.create({
@@ -113,51 +114,68 @@ export const registerTranslationBackground = (): void => {
       })
       .catch(console.error);
   });
+  const menus = [
+    {
+      id: PAGE_TRANSLATION,
+      title: "原文下の日本語訳を開始／解除（Option+A）",
+      contexts: ["all"],
+      documentUrlPatterns: ["http://*/*", "https://*/*"],
+      enabled: true,
+    },
+    {
+      id: "luvpame:easy-article",
+      title: "本文をやさしい日本語で読む",
+      contexts: ["all"],
+      documentUrlPatterns: ["http://*/*", "https://*/*"],
+      enabled: true,
+    },
+  ] satisfies Parameters<typeof browser.contextMenus.create>[0][];
   let menuSync = Promise.resolve();
   const syncMenus = () => {
     menuSync = menuSync
       .then(async () => {
         const { translationEnabled: enabled } = await readFeatures();
-        const menus = [
-          {
-            id: PAGE_TRANSLATION,
-            title: "原文下の日本語訳を開始／解除（Option+A）",
-            contexts: ["all"],
-            documentUrlPatterns: ["http://*/*", "https://*/*"],
-            enabled,
-          },
-          {
-            id: "luvpame:easy-article",
-            title: "本文をやさしい日本語で読む",
-            contexts: ["all"],
-            documentUrlPatterns: ["http://*/*", "https://*/*"],
-            enabled,
-          },
-        ] satisfies Parameters<typeof browser.contextMenus.create>[0][];
-        for (const { id, ...properties } of menus) {
-          try {
-            await browser.contextMenus.update(id, properties);
-          } catch (error) {
-            if (!errorText(error).startsWith("Cannot find menu item with id")) throw error;
-            await new Promise<void>((resolve, reject) => {
-              browser.contextMenus.create({ id, ...properties }, () => {
+        await Promise.all(
+          menus.map(({ id }) =>
+            new Promise<void>((resolve, reject) => {
+              browser.contextMenus.update(id, { enabled }, () => {
                 const error = browser.runtime.lastError;
                 if (error) reject(new Error(error.message));
                 else resolve();
               });
-            });
-          }
-        }
+            }).catch(console.error),
+          ),
+        );
       })
       .catch(console.error);
   };
-  browser.runtime.onInstalled.addListener(syncMenus);
+  const registerMenus = () => {
+    // Yabは起動時とonInstalledの同期呼び出しで作成した定義だけを保存する。
+    browser.contextMenus.removeAll(() => {
+      const error = browser.runtime.lastError;
+      if (error) console.error(new Error(error.message));
+    });
+    const registered = Promise.all(
+      menus.map(({ id, ...properties }) =>
+        new Promise<void>((resolve, reject) => {
+          browser.contextMenus.create({ id, ...properties }, () => {
+            const error = browser.runtime.lastError;
+            if (error) reject(new Error(error.message));
+            else resolve();
+          });
+        }).catch(console.error),
+      ),
+    );
+    menuSync = menuSync.then(() => registered).then(() => {});
+    syncMenus();
+  };
+  browser.runtime.onInstalled.addListener(registerMenus);
   browser.runtime.onStartup.addListener(syncMenus);
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== "local" || !("translationEnabled" in changes)) return;
     syncMenus();
   });
-  syncMenus();
+  registerMenus();
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (tab?.id === undefined) return;
     if (info.menuItemId === PAGE_TRANSLATION) void toggle(tab.id);

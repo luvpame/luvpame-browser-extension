@@ -411,6 +411,49 @@ describe("選択翻訳", () => {
     );
   });
 
+  it("翻訳UIへのフォーカスで選択が消えても翻訳を継続し、ページ側の解除で閉じる", async () => {
+    let finish: ((value: unknown) => void) | undefined;
+    const send = vi.fn((message: unknown) =>
+      isTranslationRequest(message)
+        ? new Promise((resolve) => {
+            finish = resolve;
+          })
+        : Promise.resolve(undefined),
+    );
+    mount(send);
+    select();
+    const host = document.querySelector('[data-luvpame-translation="selection"]');
+    host?.shadowRoot?.querySelector("button")?.click();
+    expect(document.activeElement).toBe(host);
+    document.getSelection()?.removeAllRanges();
+    document.dispatchEvent(new Event("selectionchange"));
+    expect(host?.isConnected).toBe(true);
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: CANCEL_TRANSLATION }));
+    finish?.(success("選択した文章"));
+    await tick();
+    expect(host?.shadowRoot?.querySelector('[role="status"]')?.textContent).toBe("選択した文章");
+    const outside = document.createElement("button");
+    document.body.append(outside);
+    outside.focus();
+    document.dispatchEvent(new Event("selectionchange"));
+    expect(host?.isConnected).toBe(false);
+  });
+
+  it("翻訳UIにフォーカスがあっても新しいページ選択へ切り替える", () => {
+    mount(async () => success());
+    select();
+    const host = document.querySelector('[data-luvpame-translation="selection"]');
+    host?.shadowRoot?.querySelector("button")?.click();
+    expect(document.activeElement).toBe(host);
+    select("<p>Another selected English sentence.</p>");
+    expect(host?.isConnected).toBe(false);
+    expect(
+      document
+        .querySelector('[data-luvpame-translation="selection"]')
+        ?.shadowRoot?.querySelector("button")?.textContent,
+    ).toBe("訳");
+  });
+
   it("選択位置のアイコンから安全なpopup訳を表示しEscapeで閉じる", async () => {
     const send = vi.fn(async () => success("選択した文章"));
     mount(send);

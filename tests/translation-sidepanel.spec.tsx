@@ -2,9 +2,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { browser } from "wxt/browser";
+import { isRecord } from "../lib/copy-protocol";
 import { Sidepanel } from "../features/translate/sidepanel";
 import {
   ARTICLE_REQUEST,
+  TRANSLATION_READY,
   CANCEL_TRANSLATION,
   TRANSLATE,
   isTranslationRequest,
@@ -32,7 +34,9 @@ beforeEach(() => {
     paragraphs: ["First paragraph.", "Second paragraph."],
   };
   vi.spyOn(browser.tabs, "query").mockImplementation(async () => [{ id: activeTab }]);
-  vi.spyOn(browser.tabs, "sendMessage").mockImplementation(async () => article);
+  vi.spyOn(browser.tabs, "sendMessage").mockImplementation(async (_tabId, message) =>
+    isRecord(message) && message.type === TRANSLATION_READY ? { ok: true } : article,
+  );
   vi.spyOn(browser.tabs.onActivated, "addListener").mockImplementation((listener) => {
     onActivated = listener;
   });
@@ -79,7 +83,11 @@ it("translates every article paragraph into easy Japanese when the active tab ex
     });
   await act(async () => root.render(<Sidepanel />));
 
-  expect(browser.tabs.sendMessage).toHaveBeenCalledWith(7, { type: ARTICLE_REQUEST });
+  expect(browser.tabs.sendMessage).toHaveBeenCalledWith(
+    7,
+    { type: ARTICLE_REQUEST },
+    { frameId: 0 },
+  );
   expect(container.querySelector("h2")?.textContent).toBe("記事の見出し");
   expect([...container.querySelectorAll("article p")].map((p) => p.textContent)).toEqual([
     "やさしい訳: First paragraph.",
@@ -112,7 +120,11 @@ it("clears old paragraphs while the same URL reloads and translates the replacem
   await act(async () => onUpdated(7, { status: "complete" }));
   expect(container.querySelector("h2")?.textContent).toBe("更新後の見出し");
   expect(container.querySelector("article")?.textContent).toBe("訳: Replacement paragraph.");
-  expect(browser.tabs.sendMessage).toHaveBeenCalledTimes(2);
+  expect(
+    vi
+      .mocked(browser.tabs.sendMessage)
+      .mock.calls.filter(([, message]) => isRecord(message) && message.type === ARTICLE_REQUEST),
+  ).toHaveLength(2);
 });
 
 it("clears visible translations and cancels pending work when translation is disabled", async () => {
@@ -215,8 +227,11 @@ it("ignores a cancelled tab's late response after switching to another article",
 
 it("keeps article extraction errors visible and retries extraction from the retry button", async () => {
   vi.spyOn(browser.tabs, "sendMessage")
+    .mockImplementationOnce(async () => ({ ok: true }))
     .mockRejectedValueOnce(new Error("記事の接続に失敗しました"))
-    .mockImplementation(async () => article);
+    .mockImplementation(async (_tabId, message) =>
+      isRecord(message) && message.type === TRANSLATION_READY ? { ok: true } : article,
+    );
   vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async (message: unknown) =>
     isTranslationRequest(message)
       ? { ok: true, text: "再取得後の訳", device: "gpu" }
@@ -227,7 +242,11 @@ it("keeps article extraction errors visible and retries extraction from the retr
   const retry = container.querySelector("button");
   expect(retry?.textContent).toBe("再試行");
   await act(async () => retry?.click());
-  expect(browser.tabs.sendMessage).toHaveBeenCalledTimes(2);
+  expect(
+    vi
+      .mocked(browser.tabs.sendMessage)
+      .mock.calls.filter(([, message]) => isRecord(message) && message.type === ARTICLE_REQUEST),
+  ).toHaveLength(2);
   expect(container.querySelector("article")?.textContent).toContain("再取得後の訳");
 });
 
