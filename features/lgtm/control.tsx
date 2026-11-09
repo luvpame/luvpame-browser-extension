@@ -1,4 +1,3 @@
-import { suspendVim } from "../../lib/editor-bridge";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 
@@ -77,8 +76,6 @@ function ReviewControls({ signal }: { signal: AbortSignal }): React.JSX.Element 
     setState("loading");
     setErrorMessage("");
 
-    const resume = suspendVim();
-    let target: HTMLTextAreaElement | undefined;
     try {
       const source = await reviewTemplate.getValue();
       if (signal.aborted) return;
@@ -106,13 +103,10 @@ function ReviewControls({ signal }: { signal: AbortSignal }): React.JSX.Element 
         }
         return;
       }
-      target = result.textarea;
       setState("success");
     } catch {
       setState("error");
       setErrorMessage("Fast LGTM could not read your saved template. Try again.");
-    } finally {
-      resume(signal.aborted ? undefined : target);
     }
   }
 

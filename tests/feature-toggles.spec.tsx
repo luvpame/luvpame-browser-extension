@@ -19,14 +19,14 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it("shows all thirteen switches and disables them until settings load", async () => {
+it("shows all ten switches and disables them until settings load", async () => {
   await act(async () => root.render(<FeatureToggles onStatus={vi.fn()} />));
   const inputs = [...container.querySelectorAll("input")];
-  expect(inputs).toHaveLength(13);
+  expect(inputs).toHaveLength(10);
   expect(inputs.every((input) => input.disabled)).toBe(true);
   await act(async () =>
     root.render(
-      <FeatureToggles features={normalizeFeatures({ vimEnabled: false })} onStatus={vi.fn()} />,
+      <FeatureToggles features={normalizeFeatures({ lgtmEnabled: false })} onStatus={vi.fn()} />,
     ),
   );
   expect(inputs.every((input) => !input.disabled)).toBe(true);

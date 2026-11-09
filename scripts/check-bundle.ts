@@ -19,7 +19,7 @@ assert.deepEqual(
     "sidePanel",
   ].sort(),
 );
-assert.equal(manifest.content_scripts.length, 5);
+assert.equal(manifest.content_scripts.length, 4);
 assert.equal(manifest.side_panel.default_path, "sidepanel.html");
 assert.equal(manifest.commands["toggle-page-translation"].suggested_key.mac, "Alt+A");
 assert(manifest.content_security_policy.extension_pages.includes("'wasm-unsafe-eval'"));

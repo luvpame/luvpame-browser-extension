@@ -3,11 +3,8 @@ import { browser } from "wxt/browser";
 export const featureLabels = {
   urlCopyEnabled: "URLをMarkdownでコピー",
   bodyCopyEnabled: "本文をMarkdownでコピー",
-  vimEnabled: "TextareaVim",
   lgtmEnabled: "GitHub: LGTM",
-  tableEnabled: "GitHub: 表挿入",
   prCopyEnabled: "GitHub: PRコピー",
-  htmlPreviewEnabled: "GitHub: HTMLプレビュー",
   devinRedirectEnabled: "GitHub: Devin Reviewリンク",
   copyMarkdownButtonEnabled: "Notion: ページ内本文コピーボタン",
   copyTitleHoverEnabled: "Notion: タイトルホバー操作",

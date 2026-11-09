@@ -6,7 +6,7 @@ export default defineConfig({
   modules: ["@wxt-dev/module-react"],
   manifest: {
     name: "Luvpame Browser Extension",
-    description: "GitHub・Notionの編集補助、Vim入力、Markdownコピーを一つに。",
+    description: "GitHub・Notionの編集補助、Markdownコピーを一つに。",
     minimum_chrome_version: "137",
     side_panel: { default_path: "sidepanel.html" },
     content_security_policy: {

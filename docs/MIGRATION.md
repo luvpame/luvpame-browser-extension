@@ -1,12 +1,14 @@
 # 移行記録
 
+この記録と `docs/plan/` は統合当時の履歴です。TextareaVim、表挿入、HTMLプレビューは現在の拡張から削除しています。
+
 採用したコミットは [機能比較表](plan/feature-comparison.md) を参照してください。Gitの履歴は統合せず、ファイルと必要な機能だけを移しました。
 
 | 元repo                         | 統合先                                                            |
 | ------------------------------ | ----------------------------------------------------------------- |
 | fast-lgtm                      | features/lgtm                                                     |
-| textarea-vim                   | features/vim                                                      |
-| github-markdown-table-inserter | features/table                                                    |
+| textarea-vim                   | 統合後に削除                                                      |
+| github-markdown-table-inserter | 統合後に削除                                                      |
 | github-enhancer                | entrypoints/github.content.ts、lib/github-\*                      |
 | github-pr-copy                 | github-enhancer版へ一本化                                         |
 | repo-redirect-for-devin        | github-enhancer版へ一本化                                         |
@@ -24,12 +26,12 @@ Fast LGTMのMITライセンスは [licenses/fast-lgtm-MIT.txt](../licenses/fast-
 
 2026-09-18時点で対象10repoには未解決Issue/PR、Release、GitHub Pagesはありませんでした。
 `github-enhancer` の [PR #1「Test HTML preview」](https://github.com/luvpame/github-enhancer/pull/1) はマージ済みです。
-説明は「Test PR for Github Enhancer HTML preview.」。Issueコメント・レビュー・行コメントは0件でした。HTML fixtureは `fixtures/html-preview-test.html` に残しています。
+説明は「Test PR for Github Enhancer HTML preview.」。Issueコメント・レビュー・行コメントは0件でした。HTMLプレビューの削除に伴い、HTML fixtureも削除しました。
 配布は自分用だけなので、ストア掲載資料・販促画像は移植していません。
 
 ## 切替
 
-1. 旧LGTM設定のテンプレート、旧Vim設定のURL許可/除外方式とパターンを控えます。
+1. 旧LGTM設定のテンプレートを控えます。
 2. 統合拡張を読み込み、「設定」に手動で貼り付けて保存します。機能のON/OFFは指定し直します。
 3. 旧拡張を無効にし、対象ページを再読み込みします。動作確認までは旧拡張をアンインストールしません。
 4. 共通メニューのURLコピー・本文コピーを実際に貼り付けて確認します。

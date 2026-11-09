@@ -1,35 +1,24 @@
 import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { browser } from "wxt/browser";
 import { watchFeatures, type Features } from "../../lib/features";
 import { FeatureToggles } from "../../lib/feature-toggles";
 import { TranslationModelSettings } from "../../features/translate/model-settings";
 import { reviewTemplate } from "../../features/lgtm/shared/storage";
 import { prepareTemplate } from "../../features/lgtm/shared/template";
-import { readUrlPolicy } from "../../features/vim/src/url-settings";
-import {
-  createUrlPolicy,
-  formatUrlPatterns,
-  type UrlPolicyMode,
-  UrlPolicyValidationError,
-} from "../../features/vim/src/url-policy";
 import { errorText } from "../../lib/copy-protocol";
 import "../../lib/ui.css";
 
 function Options() {
   const [features, setFeatures] = useState<Features>();
   const [template, setTemplate] = useState("");
-  const [mode, setMode] = useState<UrlPolicyMode>("blocklist");
-  const [patterns, setPatterns] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   useEffect(() => {
-    void Promise.all([reviewTemplate.getValue(), readUrlPolicy()])
-      .then(([text, policy]) => {
+    void reviewTemplate
+      .getValue()
+      .then((text) => {
         setTemplate(text);
-        setMode(policy.mode);
-        setPatterns(formatUrlPatterns(policy.patterns));
         setLoaded(true);
       })
       .catch((error) => setStatus(errorText(error)));
@@ -47,16 +36,10 @@ function Options() {
     }
     setSaving(true);
     try {
-      const policy = createUrlPolicy(mode, patterns);
-      await browser.storage.sync.set({ reviewTemplate: template, urlPolicy: policy });
-      setPatterns(formatUrlPatterns(policy.patterns));
-      setStatus("テンプレートとURL設定を保存しました。");
+      await reviewTemplate.setValue(template);
+      setStatus("テンプレートを保存しました。");
     } catch (error) {
-      setStatus(
-        error instanceof UrlPolicyValidationError
-          ? error.errors.map((e) => `${e.line}行目: ${e.message}`).join("\n")
-          : errorText(error),
-      );
+      setStatus(errorText(error));
     } finally {
       setSaving(false);
     }
@@ -87,23 +70,6 @@ function Options() {
           <p className="hint">
             {"{{cursor}}"}
             は省略可能です。指定すると、その位置から編集を開始します。レビューは自動送信しません。
-          </p>
-          <label htmlFor="mode">Vimを有効にするURL</label>
-          <select id="mode" value={mode} onChange={(e) => setMode(e.target.value as UrlPolicyMode)}>
-            <option value="blocklist">一致するURLを除外</option>
-            <option value="allowlist">一致するURLだけ許可</option>
-          </select>
-          <label htmlFor="patterns">対象サイト・URLパターン（1行に1つ）</label>
-          <textarea
-            id="patterns"
-            rows={6}
-            value={patterns}
-            onChange={(e) => setPatterns(e.target.value)}
-            placeholder="github.com"
-          />
-          <p className="hint">
-            github.com、https://github.com/*
-            など。空欄は除外方式なら全サイト有効、許可方式なら全サイト無効です。
           </p>
           <button type="submit">保存</button>
         </fieldset>

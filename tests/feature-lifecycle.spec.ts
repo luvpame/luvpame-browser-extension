@@ -2,20 +2,18 @@ import { beforeEach, expect, it, vi } from "vite-plus/test";
 import { browser } from "wxt/browser";
 import { featureKeys, normalizeFeatures, watchFeatures } from "../lib/features";
 import { setMergeGuard } from "../lib/merge-guard";
-import { suspendVim, suspendVimEvent, resumeVimEvent } from "../lib/editor-bridge";
 import { writeClipboard } from "../lib/offscreen-copy";
-import { mountGithubTableInserter } from "../features/table/entrypoints/content";
 
 beforeEach(() => {
   document.head.innerHTML = "";
   document.body.innerHTML = "";
   vi.restoreAllMocks();
 });
-it("normalizes all thirteen feature values without accepting string booleans", () => {
-  expect(featureKeys).toHaveLength(13);
+it("normalizes all ten feature values without accepting string booleans", () => {
+  expect(featureKeys).toHaveLength(10);
   expect(Object.values(normalizeFeatures({})).every(Boolean)).toBe(true);
-  expect(normalizeFeatures({ vimEnabled: false, lgtmEnabled: "false" })).toMatchObject({
-    vimEnabled: false,
+  expect(normalizeFeatures({ prCopyEnabled: false, lgtmEnabled: "false" })).toMatchObject({
+    prCopyEnabled: false,
     lgtmEnabled: true,
   });
 });
@@ -30,7 +28,7 @@ it("does not apply settings after disposing an initial pending read", async () =
   const apply = vi.fn();
   const stop = watchFeatures(apply);
   stop();
-  resolve({ vimEnabled: true });
+  resolve({ prCopyEnabled: true });
   await Promise.resolve();
   expect(apply).not.toHaveBeenCalled();
 });
@@ -43,29 +41,6 @@ it("restores the existing merge button without removing the DOM element", () => 
   setMergeGuard(false);
   expect(document.querySelector("button")).toBe(button);
   expect(document.getElementById("luvpame-merge-guard")).toBeNull();
-});
-it("pairs one Vim suspend with exactly one resume", () => {
-  const suspended = vi.fn();
-  const resumed = vi.fn();
-  document.addEventListener(suspendVimEvent, suspended, { once: true });
-  document.addEventListener(resumeVimEvent, resumed);
-  const resume = suspendVim();
-  resume();
-  resume();
-  expect(suspended).toHaveBeenCalledTimes(1);
-  expect(resumed).toHaveBeenCalledTimes(1);
-  document.removeEventListener(resumeVimEvent, resumed);
-});
-it("removes table controls and permits enabling again", () => {
-  document.body.innerHTML =
-    '<markdown-toolbar for="body"></markdown-toolbar><textarea id="body"></textarea>';
-  const stop = mountGithubTableInserter(document);
-  expect(document.querySelectorAll(".gmti-control")).toHaveLength(1);
-  stop();
-  expect(document.querySelectorAll(".gmti-control")).toHaveLength(0);
-  const stopAgain = mountGithubTableInserter(document);
-  expect(document.querySelectorAll(".gmti-control")).toHaveLength(1);
-  stopAgain();
 });
 it("cleans up the clipboard textarea even when writing fails", () => {
   Object.defineProperty(document, "execCommand", { configurable: true, value: () => false });
@@ -87,10 +62,10 @@ it("prefers local changes that arrive during initial settings loading", async ()
   });
   const apply = vi.fn();
   const stop = watchFeatures(apply);
-  listener!({ vimEnabled: { newValue: false } }, "local");
-  resolve({ vimEnabled: true });
+  listener!({ prCopyEnabled: { newValue: false } }, "local");
+  resolve({ prCopyEnabled: true });
   await Promise.resolve();
-  expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ vimEnabled: false }));
+  expect(apply).toHaveBeenLastCalledWith(expect.objectContaining({ prCopyEnabled: false }));
   stop();
 });
 
