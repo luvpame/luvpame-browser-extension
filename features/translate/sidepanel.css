@@ -59,7 +59,6 @@
 }
 
 .reading-status .translation-indicator {
-  width: 120px;
   margin-inline-end: 0;
   color: var(--accent);
 }
