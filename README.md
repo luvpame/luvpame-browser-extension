@@ -86,4 +86,8 @@ Vite+内蔵VitestをBunで直接実行する実験的方式は一部で動作確
 
 `bun run build`は `dist/chrome-mv3/` を再生成します。ソース変更と成果物を同じコミットに含めてください。CIで再ビルド後の差分と未追跡ファイルを検出します。
 
+翻訳エンジンのWASMは、Sakutto由来の最適化をwllama 3.13.0へ移植した独自ビルドです。通常版と互換版の生成JS・WASMを `vendor/wllama/` に保存し、通常の開発・ビルドではこれらを使います。生成物・パッチ・ビルド手順のハッシュが記録と一致しない場合はビルドを停止します。
+
+WASM本体を変更するときはDockerを起動し、`bun run build:wasm`、`bun run check` の順に実行します。前者は固定したソースとEmscriptenから通常版・互換版を再生成します。初回はビルド用イメージを取得します。生成物と `vendor/wllama/build.json` も変更と一緒に含めてください。変更内容と実機検証は [WASM最適化の記録](docs/research/translation-wasm-performance.md) を参照してください。
+
 移行元と切替・復旧の手順は [移行記録](docs/MIGRATION.md)、統合時点の仕様と判断の履歴は [計画](docs/plan/map.md) を参照してください。計画には現在削除済みのTextareaVim、表挿入、HTMLプレビューも含まれます。

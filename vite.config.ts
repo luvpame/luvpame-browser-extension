@@ -1,8 +1,8 @@
 import { defineConfig } from "vite-plus";
 import { WxtVitest } from "wxt/testing/vitest-plugin";
 export default defineConfig({
-  fmt: { ignorePatterns: ["dist/**", ".wxt/**", "docs/plan/**"] },
-  lint: { ignorePatterns: ["dist/**", ".wxt/**"] },
+  fmt: { ignorePatterns: ["dist/**", ".wxt/**", "docs/plan/**", "vendor/**"] },
+  lint: { ignorePatterns: ["dist/**", ".wxt/**", "vendor/**"] },
   plugins: [WxtVitest()],
   test: {
     environment: "jsdom",

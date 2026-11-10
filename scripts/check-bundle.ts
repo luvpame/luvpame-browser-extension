@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readdir, readFile, access } from "node:fs/promises";
 import path from "node:path";
+import { parseBuildManifest, readNativeBuild, sha256 } from "./wllama/artifacts";
 const root = path.resolve("dist/chrome-mv3");
 const manifest = JSON.parse(await readFile(path.join(root, "manifest.json"), "utf8"));
 assert.equal(manifest.manifest_version, 3);
@@ -44,6 +45,7 @@ for (const file of [
   "vendor/wllama-compat-worker.js",
   "vendor/wllama-compat-pthread.js",
   "vendor/wllama-opfs.js",
+  "vendor/wllama-build.json",
   manifest.background.service_worker,
   ...manifest.content_scripts.flatMap((script: { js: string[]; css?: string[] }) => [
     ...script.js,
@@ -51,6 +53,20 @@ for (const file of [
   ]),
 ])
   await access(path.join(root, file));
+const buildInput: unknown = JSON.parse(
+  await readFile(path.join(root, "vendor/wllama-build.json"), "utf8"),
+);
+const nativeManifest = parseBuildManifest(buildInput);
+assert.deepEqual(nativeManifest, readNativeBuild().manifest, "Native build provenance mismatch");
+for (const name of ["wllama.wasm", "wllama-compat.wasm"] as const) {
+  const wasm = await readFile(path.join(root, "vendor", name));
+  assert.equal(wasm.length, nativeManifest.files[name].bytes, `Native WASM size mismatch: ${name}`);
+  assert.equal(
+    sha256(wasm),
+    nativeManifest.files[name].sha256,
+    `Native WASM hash mismatch: ${name}`,
+  );
+}
 const walk = async (directory: string): Promise<string[]> =>
   (
     await Promise.all(

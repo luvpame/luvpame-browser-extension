@@ -1,0 +1,9 @@
+ts	phase	decision	why	evidence	result
+2026-11-09T23:38:46.165085+00:00	frame	wllama 3.13.0を維持して3種の最適化を移植する	既存SDKとメッセージ形式を保ち、GPU処理の本体を改善する	package.json;scripts/translation-runtime.ts	open
+2026-11-09T23:45:34.776595+00:00	build	固定ソースから通常版とcompat版を再生成する	SDKとworker protocolを維持しJSとWASMの混在を防ぐ	scripts/wllama/build.ts;scripts/wllama/build-native.sh	native compile running
+2026-11-09T23:49:30.475064+00:00	review	GPU synchronizeの全面削除を移植対象から外した	出力readがないprefill取消にも完了待ちの契約が必要なため	scripts/wllama/patches/0004-webgpu-reuse-bind-groups.patch	old compile stopped; clean rebuild started
+2026-11-10T00:05:29.350380+00:00	build	通常版とcompat版の固定ソースビルドが成功	双方でSIMD objectとnative版、4成果物とpatch/recipeのhashを確認した	vendor/wllama/build.json;/tmp/luvpame-wasm-build/native-build-safe-sync.log	VERIFIED
+2026-11-10T00:06:28.003666+00:00	validation	配布ビルドと全298テストが成功	custom WASMとmanifestを同梱し元成果物との一致を確認した	/tmp/luvpame-wasm-task/check.log;dist/chrome-mv3/vendor/wllama-build.json	VERIFIED
+2026-11-10T00:21:20.694860+00:00	performance	CPU0.8Bの2文は中央値936.9msから696.9msへ短縮、GPU2Bは差を断定しない	各条件を5回交互に実行し全140件の訳文一致と非再利用、失敗0を確認した	docs/research/translation-wasm-results.json	CPU narrower workload VERIFIED; GPU difference INCONCLUSIVE
+2026-11-10T00:21:20.695116+00:00	runtime	2Bと0.8BのGPU/CPUを通常版/compat版で確認し配布engineとページ表示も確認	生成中と文字表示前の取消後にも後続の翻訳が完了した	docs/research/translation-wasm-results.json	8 native mode combinations and application smokes VERIFIED
+2026-11-10T00:22:40.450481+00:00	review	gpt-6-astraで実測値と記録を再照合し、最初の文字の時間はGPUだけと明記	CPU比較ではfirstTextMsを計測していないため説明を限定した	docs/research/translation-wasm-performance.md;docs/research/translation-wasm-results.json	VERIFIED; Apple以外と長時間は未検証

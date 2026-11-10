@@ -1,6 +1,12 @@
 # PLaMo翻訳の高速化調査
 
-## 2026-11-10の実装への反映
+## WASM本体への反映
+
+設定・投入順の変更に続き、SIMDカーネルの有効化、GPUのbind group再利用とパラメーターの一括転送、行列演算の変更、不要な推論状態の保存停止を独自WASMへ反映した。ビルド方法と検証結果は [WASM最適化の記録](translation-wasm-performance.md) を参照する。
+
+## 2026-11-10の設定・投入順への反映
+
+以下は `8dea764` 時点の記録。独自WASMが未移植という記述は、この段階の状態を示す。
 
 Sakuttoの[全文Attentionキャッシュ設定の変更 #25](https://github.com/jammaru/sakutto/commit/d08e56afe159d793504ea806097228fe3773ac76)と、[GPU翻訳のバッチ化 #27](https://github.com/jammaru/sakutto/commit/972ff46e4a51ac4533ec4d9e0ecd8b54e9065f14)を参照し、次を取り入れた。
 

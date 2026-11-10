@@ -3,6 +3,8 @@ import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { runInNewContext } from "node:vm";
 import type { Plugin } from "vite";
+import { readNativeBuild } from "./wllama/artifacts";
+import { LLAMA_CPP_COMMIT, WLLAMA_VERSION } from "./wllama/pins";
 
 const packageEntry = join(
   dirname(createRequire(import.meta.url).resolve("@wllama/wllama")),
@@ -27,21 +29,29 @@ function literal(source: string, name: string): string {
   return value;
 }
 
-export function buildTranslationRuntime(source = readFileSync(packageEntry, "utf8")) {
+export function buildTranslationRuntime(
+  source = readFileSync(packageEntry, "utf8"),
+  nativeBuildDirectory?: string,
+) {
   if (
     !readFileSync(join(packageDirectory, "../package.json"), "utf8").includes(
-      '"version": "3.13.0"',
+      `"version": "${WLLAMA_VERSION}"`,
     ) ||
-    !readFileSync(join(compatDirectory, "package.json"), "utf8").includes('"version": "3.13.0"')
+    !readFileSync(join(compatDirectory, "package.json"), "utf8").includes(
+      `"version": "${WLLAMA_VERSION}"`,
+    )
   ) {
     throw new Error(
-      "The translation runtime requires @wllama/wllama and @wllama/wllama-compat 3.13.0",
+      `The translation runtime requires @wllama/wllama and @wllama/wllama-compat ${WLLAMA_VERSION}`,
     );
   }
+  if (literal(source, "LIBLLAMA_VERSION").split("-").at(-1) !== LLAMA_CPP_COMMIT.slice(0, 7))
+    throw new Error("SDK llama.cpp version does not match pinned native build");
+  const nativeBuild = readNativeBuild(nativeBuildDirectory);
   const stub = source.match(/^var JSPI_STUB = `([\s\S]*?)`;$/m)?.[1];
   if (!stub) throw new Error("Missing @wllama/wllama JSPI stub");
-  const emscripten = literal(source, "WLLAMA_EMSCRIPTEN_CODE");
-  const compatEmscripten = readFileSync(join(compatDirectory, "wasm/wllama.js"), "utf8");
+  const emscripten = nativeBuild.files["wllama.js"].toString("utf8");
+  const compatEmscripten = nativeBuild.files["wllama-compat.js"].toString("utf8");
   const worker = literal(source, "LLAMA_CPP_WORKER_CODE");
   const opfs = literal(source, "OPFS_UTILS_WORKER_CODE");
   const initStart = "      let moduleCode = JSPI_STUB + (yield this.getModuleCode());";
@@ -112,15 +122,16 @@ ${worker}
       }),
     );
   }
-  return { moduleCode, assets };
+  return { moduleCode, assets, nativeBuild };
 }
 
 export function createTranslationRuntimePlugin(): Plugin {
-  const { moduleCode, assets } = buildTranslationRuntime();
+  const { moduleCode, assets, nativeBuild } = buildTranslationRuntime();
   const wasmAssets = new Map([
-    ["vendor/wllama.wasm", join(packageDirectory, "wasm/wllama.wasm")],
-    ["vendor/wllama-compat.wasm", join(compatDirectory, "wasm/wllama.wasm")],
+    ["vendor/wllama.wasm", nativeBuild.files["wllama.wasm"]],
+    ["vendor/wllama-compat.wasm", nativeBuild.files["wllama-compat.wasm"]],
   ]);
+  const buildManifest = JSON.stringify(nativeBuild.manifest, null, 2) + "\n";
   return {
     name: "translation-runtime",
     enforce: "pre",
@@ -136,17 +147,21 @@ export function createTranslationRuntimePlugin(): Plugin {
       )
         return;
       for (const [fileName, source] of assets) this.emitFile({ type: "asset", fileName, source });
-      for (const [fileName, path] of wasmAssets)
-        this.emitFile({ type: "asset", fileName, source: readFileSync(path) });
+      for (const [fileName, source] of wasmAssets)
+        this.emitFile({ type: "asset", fileName, source });
+      this.emitFile({ type: "asset", fileName: "vendor/wllama-build.json", source: buildManifest });
     },
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         const pathname = request.url?.split("?")[0]?.slice(1);
         if (!pathname) return next();
-        const wasmPath = wasmAssets.get(pathname);
-        if (wasmPath) {
+        const wasm = wasmAssets.get(pathname);
+        if (wasm) {
           response.setHeader("Content-Type", "application/wasm");
-          response.end(readFileSync(wasmPath));
+          response.end(wasm);
+        } else if (pathname === "vendor/wllama-build.json") {
+          response.setHeader("Content-Type", "application/json");
+          response.end(buildManifest);
         } else if (assets.has(pathname)) {
           response.setHeader("Content-Type", "text/javascript");
           response.end(assets.get(pathname));

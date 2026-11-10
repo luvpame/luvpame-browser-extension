@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "buildScriptSha256": "ead4daf9e0f1fc6005f62f778e1d86ff09bde4e7108e56db46e9a47e23bd35c0",
+  "wllama": {
+    "version": "3.13.0",
+    "commit": "6647c1ea3837b2f0205a300c3bf5ff644aaa06bf"
+  },
+  "llamaCpp": {
+    "commit": "7d7f0287530bc8981690f361d8c1627dbae1c99a"
+  },
+  "emscripten": {
+    "version": "4.0.20",
+    "image": "emscripten/emsdk:4.0.20-arm64",
+    "digest": "sha256:9bcd8da83ba146da138119daa6a8a5ced30d99610a3cc8755c183f5b929c4af5"
+  },
+  "dawn": {
+    "tag": "v20260317.182325",
+    "sha256": "8dcae86c630d76b6794b271c6572becba36f4237d132bee121a56638c3d76575"
+  },
+  "patches": [
+    {
+      "file": "0003-wasm-simd-cpu-kernels.patch",
+      "sha256": "8de0bef4d1c3091e9e043e20ed13ca19fe2dfa63b09759d465c5d252c1f42c5b"
+    },
+    {
+      "file": "0004-webgpu-reuse-bind-groups.patch",
+      "sha256": "61ae9a3e18e4fd9ce12e2e4f396f6984b7aed53860a608c7ff67f4e872340d04"
+    },
+    {
+      "file": "0005-disable-prompt-cache.patch",
+      "sha256": "4f0d96d6274dc4f3e89450c968aa9ebca980b2920da91726d53460363b3b5ae2"
+    }
+  ],
+  "files": {
+    "wllama.js": {
+      "bytes": 138603,
+      "sha256": "1cdbb0231eeda4226d56756a6a98815a941b41445c7916dc9c154c0b737cacec"
+    },
+    "wllama.wasm": {
+      "bytes": 10253728,
+      "sha256": "550f5de81e552a8d57894c852a42a54d6b0e38a88b171c5ae0ff0e0dade669cd"
+    },
+    "wllama-compat.js": {
+      "bytes": 173601,
+      "sha256": "f1a8a14147d106c77987e3342d89cb3f21f96aea189bb82373997e7931815ff4"
+    },
+    "wllama-compat.wasm": {
+      "bytes": 18770127,
+      "sha256": "06f027087ab0034c030d8133a0083e2b34c916ee942a2bc9e4e9be083c8bbcec"
+    }
+  }
+}

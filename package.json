@@ -7,6 +7,7 @@
     "postinstall": "bun --bun wxt prepare",
     "dev": "bun --bun wxt",
     "build": "bun --bun wxt build",
+    "build:wasm": "bun scripts/wllama/build.ts",
     "typecheck": "bun --bun wxt prepare && bun --bun tsc --noEmit",
     "test": "vp test",
     "lint": "vp check",
