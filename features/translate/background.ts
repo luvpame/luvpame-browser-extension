@@ -9,6 +9,7 @@ import {
   CANCEL_TRANSLATION,
   TRANSLATION_PROGRESS,
   PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
   OFFSCREEN_TRANSLATE,
   OFFSCREEN_CANCEL,
   isSessionId,
@@ -110,10 +111,13 @@ export const registerTranslationBackground = (): void => {
     return true;
   });
 
-  const toggle = async (tabId: number) => {
+  const toggle = async (
+    tabId: number,
+    type: typeof PAGE_TRANSLATION | typeof PAGE_REPLACEMENT_TRANSLATION = PAGE_TRANSLATION,
+  ) => {
     try {
       if (!(await readFeatures()).translationEnabled) throw new Error("翻訳機能はOFFです。");
-      const result: unknown = await sendPageTranslationMessage(tabId, PAGE_TRANSLATION);
+      const result: unknown = await sendPageTranslationMessage(tabId, type);
       if (isRecord(result) && result.ok === false) throw new Error(String(result.error));
     } catch (error) {
       await browser.notifications.create({
@@ -124,12 +128,26 @@ export const registerTranslationBackground = (): void => {
       });
     }
   };
-  browser.commands.onCommand.addListener((command) => {
-    if (command !== "toggle-page-translation") return;
+  browser.commands.onCommand.addListener((command, tab) => {
+    if (command === "open-easy-article") {
+      if (tab?.id !== undefined)
+        void browser.sidePanel.open({ tabId: tab.id }).catch(console.error);
+      return;
+    }
+    if (command !== "toggle-page-translation" && command !== "toggle-page-replacement-translation")
+      return;
+    const type =
+      command === "toggle-page-replacement-translation"
+        ? PAGE_REPLACEMENT_TRANSLATION
+        : PAGE_TRANSLATION;
+    if (tab?.id !== undefined) {
+      void toggle(tab.id, type);
+      return;
+    }
     void browser.tabs
       .query({ active: true, currentWindow: true })
-      .then(([tab]) => {
-        if (tab?.id !== undefined) return toggle(tab.id);
+      .then(([activeTab]) => {
+        if (activeTab?.id !== undefined) return toggle(activeTab.id, type);
       })
       .catch(console.error);
   });
@@ -143,7 +161,7 @@ export const registerTranslationBackground = (): void => {
     },
     {
       id: "luvpame:easy-article",
-      title: "本文をやさしい日本語で読む",
+      title: "本文をやさしい日本語で読む（Option+B）",
       contexts: ["all"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
       enabled: true,

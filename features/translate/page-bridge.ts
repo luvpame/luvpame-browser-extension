@@ -1,6 +1,11 @@
 import { browser } from "wxt/browser";
 import { errorText, isRecord } from "../../lib/copy-protocol";
-import { ARTICLE_REQUEST, PAGE_TRANSLATION, TRANSLATION_READY } from "./shared";
+import {
+  ARTICLE_REQUEST,
+  PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
+  TRANSLATION_READY,
+} from "./shared";
 
 async function hasTranslationReceiver(tabId: number): Promise<boolean> {
   try {
@@ -19,7 +24,7 @@ async function hasTranslationReceiver(tabId: number): Promise<boolean> {
 
 export async function sendPageTranslationMessage(
   tabId: number,
-  type: typeof PAGE_TRANSLATION | typeof ARTICLE_REQUEST,
+  type: typeof PAGE_TRANSLATION | typeof PAGE_REPLACEMENT_TRANSLATION | typeof ARTICLE_REQUEST,
 ): Promise<unknown> {
   if (!(await hasTranslationReceiver(tabId))) {
     await browser.scripting.executeScript({

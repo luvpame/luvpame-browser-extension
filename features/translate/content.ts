@@ -72,14 +72,27 @@ function paragraphs(root: Element): Element[] {
 
 export async function extractArticle(
   doc: Document = document,
+  originalText: ReadonlyMap<Text, string> = new Map(),
 ): Promise<
   { ok: true; url: string; title: string; paragraphs: string[] } | { ok: false; error: string }
 > {
-  const { default: Defuddle } = await import("defuddle/full");
-  const copy = new DOMParser().parseFromString(doc.documentElement.outerHTML, "text/html");
+  const copy = doc.implementation.createHTMLDocument();
+  copy.replaceChild(copy.importNode(doc.documentElement, true), copy.documentElement);
+  if (originalText.size) {
+    const sourceWalker = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_TEXT);
+    const copyWalker = copy.createTreeWalker(copy.documentElement, NodeFilter.SHOW_TEXT);
+    while (sourceWalker.nextNode() && copyWalker.nextNode()) {
+      const source = sourceWalker.currentNode;
+      if (source instanceof Text) {
+        const original = originalText.get(source);
+        if (original !== undefined) copyWalker.currentNode.textContent = original;
+      }
+    }
+  }
   const roots = articleRoots(copy);
   if (!roots.includes(copy.body)) copy.body.replaceChildren(...roots);
   copy.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
+  const { default: Defuddle } = await import("defuddle/full");
   const result = new Defuddle(copy, { url: doc.location.href }).parse();
   const article = new DOMParser().parseFromString(result.content, "text/html");
   article.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
@@ -106,12 +119,22 @@ export async function extractArticle(
 
 type Send = (message: unknown) => Promise<unknown>;
 
+type TranslationMode = "below" | "replace";
+type Output = { host: HTMLElement; output: HTMLElement };
 type Entry = {
   text: string;
-  host: HTMLElement;
-  output: HTMLElement;
+  element: Element;
   state: "queued" | "running" | "done";
-};
+} & (
+  | ({ mode: "below" } & Output)
+  | {
+      mode: "replace";
+      node: Text;
+      original: string;
+      applied: string | undefined;
+      error: Output | undefined;
+    }
+);
 
 export function createTranslationController({
   doc = document,
@@ -120,11 +143,11 @@ export function createTranslationController({
   const win = doc.defaultView;
   if (!win) throw new Error("ページが見つかりません。");
   let enabled = false;
-  let active = false;
+  let mode: TranslationMode | undefined;
   let generation = 0;
   let sessionId = "";
   let runningGeneration: number | undefined;
-  const entries = new Map<Element, Entry>();
+  const entries = new Map<Element | Text, Entry>();
   let selectionSession = "";
   let selectionText = "";
   let selectionHost: HTMLElement | undefined;
@@ -207,47 +230,85 @@ export function createTranslationController({
     shadow.append(style, indicator, output);
     return { host, output };
   };
+  const placeOutput = (element: Element, host: HTMLElement) => {
+    if (element.matches("td,th,li,dt,dd")) {
+      if (element.lastChild !== host) element.append(host);
+    } else if (element.nextSibling !== host) element.after(host);
+  };
+  const unchanged = (entry: Entry) =>
+    entry.mode === "below"
+      ? sourceText(entry.element) === entry.text
+      : entry.element.contains(entry.node) &&
+        !!entry.node.parentElement &&
+        !entry.node.parentElement.closest(PAGE_EXCLUDED) &&
+        entry.node.data === (entry.applied ?? entry.original);
+  const restore = (entry: Entry) => {
+    if (entry.mode === "below") entry.host.remove();
+    else {
+      if (entry.node.data === entry.applied) entry.node.data = entry.original;
+      entry.applied = undefined;
+      entry.error?.host.remove();
+      entry.error = undefined;
+    }
+  };
+  const showText = (entry: Entry, text: string) => {
+    if (entry.mode === "below") entry.output.textContent = text;
+    else if (text.trim()) {
+      const leading = entry.original.match(/^\s*/)?.[0] ?? "";
+      const trailing = entry.original.match(/\s*$/)?.[0] ?? "";
+      entry.applied = `${leading}${text.trim()}${trailing}`;
+      entry.node.data = entry.applied;
+    }
+  };
   const pump = async () => {
-    if (runningGeneration === generation || !active) return;
+    if (runningGeneration === generation || !mode) return;
     const epoch = generation;
     runningGeneration = epoch;
     const id = sessionId;
     const tasks = new Set<Promise<void>>();
-    const processEntry = async (element: Element, entry: Entry) => {
+    const processEntry = async (key: Element | Text, entry: Entry) => {
       entry.state = "running";
       const current = () =>
-        active &&
+        !!mode &&
         epoch === generation &&
-        element.isConnected &&
-        entries.get(element) === entry &&
-        sourceText(element) === entry.text;
+        key.isConnected &&
+        entries.get(key) === entry &&
+        unchanged(entry);
       try {
         const text = await translate(
           entry.text,
           id,
           current,
           (text) => {
-            entry.output.textContent = text;
+            showText(entry, text);
           },
           "page",
         );
-        if (current() && text !== undefined) entry.output.textContent = text;
+        if (current() && text !== undefined) showText(entry, text);
       } catch (error) {
-        if (current())
-          entry.output.textContent =
-            error instanceof Error ? error.message : "翻訳に失敗しました。";
+        if (current()) {
+          const message = error instanceof Error ? error.message : "翻訳に失敗しました。";
+          if (entry.mode === "below") entry.output.textContent = message;
+          else {
+            restore(entry);
+            entry.error = createOutput(entry.element);
+            entry.error.output.textContent = message;
+            placeOutput(entry.element, entry.error.host);
+          }
+        }
       } finally {
         entry.state = "done";
-        entry.host.setAttribute("aria-busy", "false");
+        const output = entry.mode === "below" ? entry : entry.error;
+        output?.host.setAttribute("aria-busy", "false");
       }
     };
     try {
-      while (active && epoch === generation) {
+      while (mode && epoch === generation) {
         // 応答待ちで次の波が欠けないよう、実行2件に加えて次の2件を先読みする。
         while (tasks.size < 4) {
           const next = Array.from(entries)
             .filter(([, entry]) => entry.state === "queued")
-            .sort(([a], [b]) => {
+            .sort(([, a], [, b]) => {
               const distance = (element: Element) => {
                 const rect = element.getBoundingClientRect();
                 return Math.max(
@@ -259,8 +320,13 @@ export function createTranslationController({
                 );
               };
               return (
-                distance(a) - distance(b) ||
-                (a.compareDocumentPosition(b) & win.Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1)
+                distance(a.element) - distance(b.element) ||
+                (a.element === b.element
+                  ? 0
+                  : a.element.compareDocumentPosition(b.element) &
+                      win.Node.DOCUMENT_POSITION_FOLLOWING
+                    ? -1
+                    : 1)
               );
             })[0];
           if (!next) break;
@@ -276,36 +342,60 @@ export function createTranslationController({
     } finally {
       if (runningGeneration === epoch) {
         runningGeneration = undefined;
-        if (active && Array.from(entries.values()).some((entry) => entry.state === "queued"))
+        if (mode && Array.from(entries.values()).some((entry) => entry.state === "queued"))
           void pump();
       }
     }
   };
   const refresh = () => {
-    if (!active) return;
-    const candidates = new Set(
-      articleRoots(doc)
-        .flatMap(paragraphs)
-        .filter((node) => english(sourceText(node))),
-    );
-    for (const [element, entry] of entries) {
-      if (!candidates.has(element) || sourceText(element) !== entry.text) {
-        entry.host.remove();
-        entries.delete(element);
-      } else if (element.matches("td,th,li,dt,dd")) {
-        if (element.lastChild !== entry.host) element.append(entry.host);
-      } else if (element.nextSibling !== entry.host) element.after(entry.host);
+    if (!mode) return;
+    const candidates = new Map<Element | Text, Element>();
+    for (const element of articleRoots(doc).flatMap(paragraphs)) {
+      if (mode === "below") {
+        if (english(sourceText(element))) candidates.set(element, element);
+      } else {
+        const walker = doc.createTreeWalker(element, win.NodeFilter.SHOW_TEXT);
+        while (walker.nextNode()) {
+          const node = walker.currentNode;
+          if (
+            node instanceof win.Text &&
+            node.parentElement &&
+            !node.parentElement.closest(PAGE_EXCLUDED)
+          )
+            candidates.set(node, element);
+        }
+      }
     }
-    for (const element of candidates) {
-      if (entries.has(element)) continue;
-      const entry: Entry = {
-        text: sourceText(element),
-        ...createOutput(element),
-        state: "queued",
-      };
-      entries.set(element, entry);
-      if (element.matches("td,th,li,dt,dd")) element.append(entry.host);
-      else element.after(entry.host);
+    for (const [key, entry] of entries) {
+      if (!candidates.has(key) || candidates.get(key) !== entry.element || !unchanged(entry)) {
+        restore(entry);
+        entries.delete(key);
+      } else if (entry.mode === "below") placeOutput(entry.element, entry.host);
+    }
+    for (const [key, element] of candidates) {
+      if (entries.has(key)) continue;
+      if (mode === "below") {
+        const entry: Entry = {
+          mode,
+          element,
+          text: sourceText(element),
+          ...createOutput(element),
+          state: "queued",
+        };
+        entries.set(key, entry);
+        placeOutput(element, entry.host);
+      } else if (key instanceof win.Text && english(key.data)) {
+        entries.set(key, {
+          mode,
+          element,
+          node: key,
+          original: key.data,
+          text: key.data.trim(),
+          applied: undefined,
+          error: undefined,
+          state: "queued",
+        });
+      }
     }
     void pump();
   };
@@ -464,12 +554,12 @@ export function createTranslationController({
     positionSelection();
   };
   const reset = () => {
-    active = false;
+    mode = undefined;
     generation += 1;
     cancel(sessionId);
     sessionId = "";
     observer.disconnect();
-    entries.forEach((entry) => entry.host.remove());
+    entries.forEach(restore);
     entries.clear();
     closeSelection();
   };
@@ -488,11 +578,12 @@ export function createTranslationController({
       enabled = value;
       if (!value) reset();
     },
-    toggle() {
+    toggle(nextMode: TranslationMode = "below") {
       if (!enabled) return { ok: false, error: "翻訳はOFFです。" };
-      if (active) reset();
-      else {
-        active = true;
+      const stop = mode === nextMode;
+      reset();
+      if (!stop) {
+        mode = nextMode;
         sessionId = crypto.randomUUID();
         observer.observe(doc.documentElement, {
           subtree: true,
@@ -511,7 +602,15 @@ export function createTranslationController({
         });
         refresh();
       }
-      return { ok: true, active };
+      return { ok: true, active: !!mode };
+    },
+    extractArticle() {
+      const originals = new Map<Text, string>();
+      for (const entry of entries.values()) {
+        if (entry.mode === "replace" && entry.node.data === entry.applied)
+          originals.set(entry.node, entry.original);
+      }
+      return extractArticle(doc, originals);
     },
     progress(id: string, requestId: string, update: TranslationUpdate) {
       const request = requests.get(requestId);

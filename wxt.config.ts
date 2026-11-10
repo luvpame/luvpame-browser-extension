@@ -37,6 +37,14 @@ export default defineConfig({
         suggested_key: { default: "Alt+A", mac: "Alt+A" },
         description: "原文下の日本語訳を開始／解除",
       },
+      "toggle-page-replacement-translation": {
+        suggested_key: { default: "Alt+Shift+A", mac: "Alt+Shift+A" },
+        description: "原文を日本語訳に置き換え／解除",
+      },
+      "open-easy-article": {
+        suggested_key: { default: "Alt+B", mac: "Alt+B" },
+        description: "本文をやさしい日本語で読む",
+      },
       "copy-markdown-link": {
         suggested_key: { default: "Ctrl+Shift+Y", mac: "Command+Shift+Y" },
         description: "現在のタブのURLをMarkdownでコピー",

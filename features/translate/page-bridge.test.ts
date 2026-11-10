@@ -6,12 +6,19 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock("wxt/browser", () => ({ browser: api }));
 import { sendPageTranslationMessage } from "./page-bridge";
-import { ARTICLE_REQUEST, PAGE_TRANSLATION, TRANSLATION_READY } from "./shared";
+import {
+  ARTICLE_REQUEST,
+  PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
+  TRANSLATION_READY,
+} from "./shared";
 
 const missingReceiver = new Error("Could not establish connection. Receiving end does not exist.");
-const requestTypes = [PAGE_TRANSLATION, ARTICLE_REQUEST] satisfies Parameters<
-  typeof sendPageTranslationMessage
->[1][];
+const requestTypes = [
+  PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
+  ARTICLE_REQUEST,
+] satisfies Parameters<typeof sendPageTranslationMessage>[1][];
 
 beforeEach(() => {
   vi.resetAllMocks();

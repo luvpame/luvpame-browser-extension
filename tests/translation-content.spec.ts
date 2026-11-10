@@ -6,12 +6,14 @@ import { extractArticle } from "../features/translate/content";
 import {
   ARTICLE_REQUEST,
   PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
   TRANSLATION_PROGRESS,
   TRANSLATION_READY,
 } from "../features/translate/shared";
 
 const controller = vi.hoisted(() => ({
   setEnabled: vi.fn(),
+  extractArticle: vi.fn(),
   toggle: vi.fn(() => ({ ok: true, active: true })),
   progress: vi.fn(),
   reset: vi.fn(),
@@ -19,7 +21,7 @@ const controller = vi.hoisted(() => ({
 }));
 vi.mock("../features/translate/content", () => ({
   createTranslationController: () => controller,
-  extractArticle: vi.fn(),
+  extractArticle: controller.extractArticle,
 }));
 
 let ctx: ContentScriptContext;
@@ -68,7 +70,7 @@ it("confirms the receiver synchronously while settings remain pending", () => {
   expect(extractArticle).not.toHaveBeenCalled();
 });
 
-it.each([PAGE_TRANSLATION, ARTICLE_REQUEST])(
+it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
   "waits for initial settings before responding to %s",
   async (type) => {
     const initialSettings = Promise.withResolvers<{ translationEnabled: boolean }>();
@@ -84,7 +86,7 @@ it.each([PAGE_TRANSLATION, ARTICLE_REQUEST])(
     initialSettings.resolve({ translationEnabled: true });
     await vi.waitFor(() =>
       expect(respond).toHaveBeenCalledExactlyOnceWith(
-        type === PAGE_TRANSLATION ? { ok: true, active: true } : article,
+        type === ARTICLE_REQUEST ? article : { ok: true, active: true },
       ),
     );
     expect(controller.setEnabled).toHaveBeenCalledExactlyOnceWith(true);
@@ -111,7 +113,7 @@ it.each(["stored", "changed"])(
   },
 );
 
-it.each([PAGE_TRANSLATION, ARTICLE_REQUEST])(
+it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
   "reports initial settings failures when handling %s",
   async (type) => {
     const initialSettings = Promise.withResolvers<never>();
@@ -133,7 +135,7 @@ it.each([PAGE_TRANSLATION, ARTICLE_REQUEST])(
   },
 );
 
-it.each([PAGE_TRANSLATION, ARTICLE_REQUEST])(
+it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
   "ignores late settings after invalidation while handling %s",
   async (type) => {
     const initialSettings = Promise.withResolvers<{ translationEnabled: boolean }>();
@@ -161,8 +163,19 @@ it("replies to page translation through the callback without returning a Promise
   await vi.waitFor(() =>
     expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true, active: true }),
   );
-  expect(controller.toggle).toHaveBeenCalledTimes(1);
+  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith();
   expect(controller.setEnabled).toHaveBeenCalledWith(true);
+});
+
+it("routes replacement translation to the replacement mode", async () => {
+  startContentScript();
+  const respond = vi.fn();
+  expect(listener({ type: PAGE_REPLACEMENT_TRANSLATION }, sender, respond)).toBe(true);
+  await vi.waitFor(() =>
+    expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true, active: true }),
+  );
+  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith("replace");
+  expect(extractArticle).not.toHaveBeenCalled();
 });
 
 it("keeps the article response channel open until extraction finishes", async () => {

@@ -2,10 +2,11 @@ import { defineContentScript } from "#imports";
 import { browser } from "wxt/browser";
 import { watchFeatures } from "../lib/features";
 import { isRecord } from "../lib/copy-protocol";
-import { createTranslationController, extractArticle } from "../features/translate/content";
+import { createTranslationController } from "../features/translate/content";
 import {
   ARTICLE_REQUEST,
   PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
   TRANSLATION_PROGRESS,
   TRANSLATION_READY,
   isTranslationUpdate,
@@ -41,7 +42,11 @@ export default defineContentScript({
         respond({ ok: true });
         return;
       }
-      if (message.type === PAGE_TRANSLATION || message.type === ARTICLE_REQUEST) {
+      if (
+        message.type === PAGE_TRANSLATION ||
+        message.type === PAGE_REPLACEMENT_TRANSLATION ||
+        message.type === ARTICLE_REQUEST
+      ) {
         void ready.then((result) => {
           if (ctx.isInvalid) return;
           if (!result.ok) {
@@ -52,11 +57,15 @@ export default defineContentScript({
             respond(controller.toggle());
             return;
           }
+          if (message.type === PAGE_REPLACEMENT_TRANSLATION) {
+            respond(controller.toggle("replace"));
+            return;
+          }
           if (!enabled) {
             respond({ ok: false, error: "翻訳はOFFです。" });
             return;
           }
-          void extractArticle().then(respond, (error: unknown) =>
+          void controller.extractArticle().then(respond, (error: unknown) =>
             respond({
               ok: false,
               error: error instanceof Error ? error.message : "本文を取得できませんでした。",

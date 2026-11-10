@@ -37,6 +37,8 @@ import {
   OFFSCREEN_CANCEL,
   isTranslationRequest,
   TRANSLATION_READY,
+  PAGE_TRANSLATION,
+  PAGE_REPLACEMENT_TRANSLATION,
 } from "./shared";
 
 const request = {
@@ -126,7 +128,7 @@ it("creates static menus synchronously before settings resolve", async () => {
     },
     {
       id: menuIds[1],
-      title: "本文をやさしい日本語で読む",
+      title: "本文をやさしい日本語で読む（Option+B）",
       contexts: ["all"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
       enabled: true,
@@ -346,21 +348,52 @@ it("offers both context menus and opens the native sidepanel directly from its m
   );
 });
 
-it("toggles the active page from the keyboard command without reinjecting", async () => {
+it.each([
+  ["toggle-page-translation", PAGE_TRANSLATION],
+  ["toggle-page-replacement-translation", PAGE_REPLACEMENT_TRANSLATION],
+])("toggles the active page with %s without reinjecting", async (name, type) => {
   api.tabs.query.mockResolvedValue([{ id: 7 }]);
   api.tabs.sendMessage.mockResolvedValue({ ok: true, active: true });
   registerTranslationBackground();
   const command = api.commands.onCommand.addListener.mock.calls[0]?.[0];
-  command("toggle-page-translation");
+  command(name);
   await vi.waitFor(() =>
-    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(
-      7,
-      { type: "luvpame:page-translation" },
-      { frameId: 0 },
-    ),
+    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(7, { type }, { frameId: 0 }),
   );
   expect(api.scripting.executeScript).not.toHaveBeenCalled();
   expect(api.notifications.create).not.toHaveBeenCalled();
+});
+
+it("uses the command tab for replacement translation", async () => {
+  registerTranslationBackground();
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("toggle-page-replacement-translation", {
+    id: 8,
+  });
+  await vi.waitFor(() =>
+    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(
+      8,
+      { type: PAGE_REPLACEMENT_TRANSLATION },
+      { frameId: 0 },
+    ),
+  );
+  expect(api.tabs.query).not.toHaveBeenCalled();
+});
+
+it("opens easy Japanese directly from the command before reading settings", () => {
+  api.sidePanel.open.mockResolvedValue(undefined);
+  api.storage.local.get.mockImplementation(() => new Promise(() => {}));
+  registerTranslationBackground();
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("open-easy-article", { id: 7 });
+  expect(api.sidePanel.open).toHaveBeenCalledExactlyOnceWith({ tabId: 7 });
+  expect(api.storage.local.get).not.toHaveBeenCalled();
+  expect(api.tabs.query).not.toHaveBeenCalled();
+});
+
+it("does not asynchronously open a sidepanel without the command tab", () => {
+  registerTranslationBackground();
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("open-easy-article");
+  expect(api.sidePanel.open).not.toHaveBeenCalled();
+  expect(api.tabs.query).not.toHaveBeenCalled();
 });
 
 it("recovers the keyboard command on an existing page after extension reload", async () => {

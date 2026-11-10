@@ -31,7 +31,19 @@ assert.deepEqual(
 );
 assert.equal(manifest.content_scripts.length, 4);
 assert.equal(manifest.side_panel.default_path, "sidepanel.html");
-assert.equal(manifest.commands["toggle-page-translation"].suggested_key.mac, "Alt+A");
+for (const [command, key] of [
+  ["toggle-page-translation", "Alt+A"],
+  ["toggle-page-replacement-translation", "Alt+Shift+A"],
+  ["open-easy-article", "Alt+B"],
+] as const) {
+  assert.equal(manifest.commands[command].suggested_key.default, key);
+  assert.equal(manifest.commands[command].suggested_key.mac, key);
+}
+assert(
+  Object.values(manifest.commands).filter(
+    (command) => typeof command === "object" && command !== null && "suggested_key" in command,
+  ).length <= 4,
+);
 assert(manifest.content_security_policy.extension_pages.includes("'wasm-unsafe-eval'"));
 for (const file of [
   "offscreen.html",

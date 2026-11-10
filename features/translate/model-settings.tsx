@@ -109,7 +109,7 @@ export function TranslationModelSettings() {
         </>
       )}
       <p className="hint">
-        原文下の翻訳はOption+Aで開始・解除できます。他の拡張と競合する場合は
+        原文下の翻訳はOption+A、原文の置き換えはOption+Shift+Aで開始・解除できます。やさしい日本語はOption+Bで開きます。他の拡張と競合する場合は
         chrome://extensions/shortcuts で変更してください。
       </p>
       <p role="status">{status}</p>

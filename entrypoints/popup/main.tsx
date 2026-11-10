@@ -124,7 +124,7 @@ function Popup() {
           <span>
             <strong>原文の下に日本語訳</strong>
             <small>
-              開始／解除 <kbd>Option+A</kbd>
+              開始／解除 <kbd>Option+A</kbd> ・ 置き換え <kbd>Option+Shift+A</kbd>
             </small>
           </span>
         </button>
@@ -141,7 +141,9 @@ function Popup() {
           </svg>
           <span>
             <strong>やさしい日本語で読む</strong>
-            <small>本文をサイドパネルで翻訳</small>
+            <small>
+              サイドパネルで翻訳 <kbd>Option+B</kbd>
+            </small>
           </span>
         </button>
       </div>
