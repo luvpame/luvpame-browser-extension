@@ -1,6 +1,7 @@
 import { isRecord } from "../../lib/copy-protocol";
 
 export const PREPARE_TRANSLATION = "luvpame:prepare-translation";
+export const OFFSCREEN_PREWARM_TRANSLATION = "luvpame:offscreen-prewarm-translation";
 export const OFFSCREEN_PREPARE_TRANSLATION = "luvpame:offscreen-prepare-translation";
 export const TRANSLATE = "luvpame:translate";
 export const TRANSLATE_BATCH = "luvpame:translate-batch";
@@ -17,7 +18,7 @@ export const OFFSCREEN_CANCEL_REQUEST = "luvpame:offscreen-cancel-translation-re
 export const OFFSCREEN_REPRIORITIZE = "luvpame:offscreen-reprioritize";
 export type TranslationMode = "below" | "replace";
 export type TargetLanguage = "ja" | "ja-easy";
-export type TranslationModel = "0.8b" | "2b" | "2b-speculative";
+export type TranslationModel = "0.8b" | "2b";
 export type TranslationDevice = "gpu" | "cpu";
 export type TranslationProvider =
   | { kind: "browser"; model: TranslationModel }
@@ -131,7 +132,7 @@ export const isReprioritizeTranslationsRequest = (
       isRecord(update) && isSessionId(update.requestId) && isViewportDistance(update.distance),
   );
 export const isTranslationModel = (value: unknown): value is TranslationModel =>
-  value === "0.8b" || value === "2b" || value === "2b-speculative";
+  value === "0.8b" || value === "2b";
 export const isTranslationProvider = (value: unknown): value is TranslationProvider =>
   isRecord(value) &&
   ((value.kind === "browser" && isTranslationModel(value.model)) ||

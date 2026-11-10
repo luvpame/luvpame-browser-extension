@@ -159,7 +159,7 @@ it("replaces stale menus synchronously during installation before applying setti
   api.runtime.onStartup.addListener.mock.calls[0]?.[0]();
   await vi.waitFor(() => {
     expect([...menus.values()].map((menu) => menu.contexts)).toEqual([["all"], ["all"]]);
-    expect(api.storage.local.get).toHaveBeenCalledTimes(3);
+    expect(api.storage.local.get).toHaveBeenCalledTimes(5);
   });
   expect([...menus.keys()]).toEqual(menuIds);
   expect(api.contextMenus.removeAll).toHaveBeenCalledTimes(2);
@@ -414,11 +414,12 @@ it("routes concurrent chunks by request and tab, and ignores late progress after
   registerTranslationBackground();
   const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
   const pending = new Map<string, (value: unknown) => void>();
-  api.runtime.sendMessage.mockImplementation(
-    (message) =>
-      new Promise((resolve) => {
-        pending.set(`${message.sessionId}:${message.requestId}`, resolve);
-      }),
+  api.runtime.sendMessage.mockImplementation((message) =>
+    message.type !== OFFSCREEN_TRANSLATE
+      ? Promise.resolve({ ok: true })
+      : new Promise((resolve) => {
+          pending.set(`${message.sessionId}:${message.requestId}`, resolve);
+        }),
   );
   const first = vi.fn();
   const second = vi.fn();
@@ -543,6 +544,10 @@ it.each([{ texts: ["一", "二"] }, { texts: ["一"] }, { texts: ["一", ""] }])
 );
 
 it("keeps reprioritization while offscreen initialization is pending and isolates tabs and sessions", async () => {
+  registerTranslationBackground();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  vi.mocked(ensureOffscreen).mockClear();
+  api.runtime.sendMessage.mockClear();
   let ready: () => void = () => {};
   vi.mocked(ensureOffscreen).mockImplementationOnce(
     () =>
@@ -550,7 +555,6 @@ it("keeps reprioritization while offscreen initialization is pending and isolate
         ready = resolve;
       }),
   );
-  registerTranslationBackground();
   const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
   const respond = vi.fn();
   listener({ ...request, viewportDistance: 900 }, sender, respond);
@@ -652,7 +656,7 @@ it.each([false, true])(
       ),
     );
     expect(result).toEqual({ ok: true, device: "gpu" });
-    expect(api.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith({
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith({
       type: OFFSCREEN_PREPARE_TRANSLATION,
       provider: { kind: "browser", model: "2b" },
     });
@@ -701,6 +705,9 @@ it("ignores model preparation from content scripts, foreign extensions and non-e
 it("rejects invalid or changed model selections before preparing any model", async () => {
   api.storage.local.get.mockResolvedValue({ translationModel: "2b" });
   registerTranslationBackground();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  vi.mocked(ensureOffscreen).mockClear();
+  api.runtime.sendMessage.mockClear();
   const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
   const extensionPage = { id: "test-extension", url: api.runtime.getURL("/options.html") };
   for (const model of [undefined, "other", "0.8b"]) {
@@ -714,4 +721,80 @@ it("rejects invalid or changed model selections before preparing any model", asy
   }
   expect(ensureOffscreen).not.toHaveBeenCalled();
   expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+});
+
+it("automatically prewarms the selected browser model at registration and after model changes", async () => {
+  registerTranslationBackground();
+  await vi.waitFor(() =>
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith({
+      type: "luvpame:offscreen-prewarm-translation",
+      provider: { kind: "browser", model: "0.8b" },
+    }),
+  );
+  api.storage.local.get.mockResolvedValue({ translationModel: "2b" });
+  api.storage.onChanged.addListener.mock.calls[0]?.[0](
+    { translationModel: { newValue: "2b" } },
+    "local",
+  );
+  await vi.waitFor(() =>
+    expect(api.runtime.sendMessage).toHaveBeenLastCalledWith({
+      type: "luvpame:offscreen-prewarm-translation",
+      provider: { kind: "browser", model: "2b" },
+    }),
+  );
+});
+
+it.each([{ translationEnabled: false }, { translationBackend: "ollama" }])(
+  "does not prewarm unavailable browser translation: %j",
+  async (settings) => {
+    api.storage.local.get.mockResolvedValue(settings);
+    registerTranslationBackground();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(ensureOffscreen).not.toHaveBeenCalled();
+    expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+  },
+);
+
+it("discards stale prewarming after settings change while offscreen initialization is pending", async () => {
+  let ready: () => void = () => {};
+  vi.mocked(ensureOffscreen).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        ready = resolve;
+      }),
+  );
+  registerTranslationBackground();
+  await vi.waitFor(() => expect(ensureOffscreen).toHaveBeenCalledOnce());
+  api.storage.local.get.mockResolvedValue({ translationModel: "2b" });
+  api.storage.onChanged.addListener.mock.calls[0]?.[0](
+    { translationModel: { newValue: "2b" } },
+    "local",
+  );
+  ready();
+  await vi.waitFor(() =>
+    expect(api.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith({
+      type: "luvpame:offscreen-prewarm-translation",
+      provider: { kind: "browser", model: "2b" },
+    }),
+  );
+});
+
+it("retries prewarming after failure when browser translation is enabled again", async () => {
+  const report = vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.mocked(ensureOffscreen).mockRejectedValueOnce(new Error("not ready"));
+  registerTranslationBackground();
+  await vi.waitFor(() => expect(report).toHaveBeenCalled());
+  const changed = api.storage.onChanged.addListener.mock.calls[0]?.[0];
+  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
+  changed({ translationEnabled: { newValue: false } }, "local");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+  api.storage.local.get.mockResolvedValue({ translationEnabled: true });
+  changed({ translationEnabled: { newValue: true } }, "local");
+  await vi.waitFor(() =>
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith({
+      type: "luvpame:offscreen-prewarm-translation",
+      provider: { kind: "browser", model: "0.8b" },
+    }),
+  );
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import type { TranslationOptions } from "./shared";
 import {
   OFFSCREEN_PREPARE_TRANSLATION,
+  OFFSCREEN_PREWARM_TRANSLATION,
   OFFSCREEN_TRANSLATE,
   OFFSCREEN_TRANSLATE_BATCH,
   OFFSCREEN_CANCEL,
@@ -14,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   translate: vi.fn(),
   prepare: vi.fn(),
+  prewarm: vi.fn(),
   batch: vi.fn(),
 }));
 vi.mock("wxt/browser", () => ({
@@ -25,7 +27,11 @@ vi.mock("wxt/browser", () => ({
     },
   },
 }));
-vi.mock("./engine", () => ({ translate: mocks.translate, prepareTranslation: mocks.prepare }));
+vi.mock("./engine", () => ({
+  translate: mocks.translate,
+  prepareTranslation: mocks.prepare,
+  prewarmTranslation: mocks.prewarm,
+}));
 vi.mock("./batch", () => ({ translateBatch: mocks.batch }));
 vi.mock("../../lib/offscreen-copy", () => ({ convertHtml: vi.fn(), writeClipboard: vi.fn() }));
 const sender = { id: "test-extension" };
@@ -222,4 +228,32 @@ it("aborts remaining batch work before responding to a failed translation", asyn
   expect(result).toEqual({ requestId: request.requestId, ok: false, error: "translation failed" });
   expect(batchSignal?.aborted).toBe(true);
   expect(batchSignal?.reason).toBe(failure);
+});
+
+it("prewarms saved models through the cache-only engine path", async () => {
+  const listener = await listen();
+  expect(
+    await new Promise((resolve) =>
+      listener(
+        { type: OFFSCREEN_PREWARM_TRANSLATION, provider: request.provider },
+        sender,
+        resolve,
+      ),
+    ),
+  ).toEqual({ ok: true });
+  expect(mocks.prewarm).toHaveBeenCalledWith(
+    "0.8b",
+    expect.objectContaining({ signal: expect.any(AbortSignal) }),
+  );
+  expect(mocks.prepare).not.toHaveBeenCalled();
+  mocks.prewarm.mockRejectedValueOnce(new Error("cache deleted"));
+  expect(
+    await new Promise((resolve) =>
+      listener(
+        { type: OFFSCREEN_PREWARM_TRANSLATION, provider: request.provider },
+        sender,
+        resolve,
+      ),
+    ),
+  ).toEqual({ ok: false, error: "cache deleted" });
 });

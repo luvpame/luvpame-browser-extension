@@ -87,22 +87,6 @@ export function buildTranslationRuntime(
     "createWorker(OPFS_UTILS_WORKER_CODE)",
     'new Worker(new URL("vendor/wllama-opfs.js", globalThis.location.href).href, { type: "module" })',
   );
-  moduleCode = replaceOnce(
-    moduleCode,
-    "      const modelFiles = yield prepareBlobs(blobs);\n      yield this.proxy.moduleInit(modelFiles.all);",
-    `      const modelFiles = yield prepareBlobs(blobs);
-      if (typeof params.spec_draft_model === "string" && params.spec_draft_model.startsWith("https://")) {
-        params.signal?.throwIfAborted();
-        const draft = yield this.modelManager.getModelOrDownload({ url: params.spec_draft_model }, params);
-        params.signal?.throwIfAborted();
-        const draftBlobs = yield draft.open();
-        params.signal?.throwIfAborted();
-        if (draftBlobs.length !== 1 || draftBlobs[0].size === 0) throw new Error("Expected one non-empty draft GGUF");
-        modelFiles.all.push({ name: "draft.gguf", blob: draftBlobs[0] });
-        params = { ...params, spec_draft_model: "models/draft.gguf" };
-      }
-      yield this.proxy.moduleInit(modelFiles.all);`,
-  );
   // MV3 forbids executable Blob URLs, including workers created inside Emscripten.
   const assets = new Map<string, string>();
   for (const [name, code] of [

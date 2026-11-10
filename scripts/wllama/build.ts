@@ -55,7 +55,7 @@ for (const file of (await readdir(patchDirectory))
   await run("git", ["apply", path]);
   patches.push({ file, sha256: sha256(await readFile(path)) });
 }
-assert.equal(patches.length, 4);
+assert.equal(patches.length, 3);
 
 const dawn = await fetch(
   `https://github.com/google/dawn/releases/download/${DAWN_TAG}/emdawnwebgpu_pkg-${DAWN_TAG}.zip`,

@@ -29,21 +29,23 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-it("saves the experimental model and explains its additional download and fallback", async () => {
-  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({}));
+it("defaults a removed model selection to 0.8B and offers only supported models", async () => {
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({
+    translationModel: "2b-speculative",
+  }));
   await act(async () => root.render(<TranslationModelSettings />));
   const select = container.querySelector<HTMLSelectElement>("#translation-model")!;
+  expect(select.value).toBe("0.8b");
+  expect(Array.from(select.options, (option) => option.value)).toEqual(["2b", "0.8b"]);
   await act(async () => {
-    select.value = "2b-speculative";
+    select.value = "2b";
     select.dispatchEvent(new Event("change", { bubbles: true }));
   });
   expect(browser.storage.local.set).toHaveBeenLastCalledWith({
     translationBackend: "browser",
-    translationModel: "2b-speculative",
+    translationModel: "2b",
   });
-  expect(select.value).toBe("2b-speculative");
-  expect(container.textContent).toContain("補助モデル約573MB");
-  expect(container.textContent).toContain("通常の2B");
+  expect(select.value).toBe("2b");
   expect(browser.runtime.sendMessage).not.toHaveBeenCalled();
 });
 

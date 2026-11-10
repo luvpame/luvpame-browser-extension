@@ -133,17 +133,11 @@ export function TranslationModelSettings() {
             }}
           >
             <option value="2b">PLaMo 3 Translate 2B（約1.81GB）</option>
-            <option value="2b-speculative">PLaMo 3 Translate 2B＋0.8B補助（実験）</option>
             <option value="0.8b">PLaMo 3 Translate 0.8B（約573MB）</option>
           </select>
           <button type="button" disabled={!ready} onClick={() => void prepare()}>
             モデルを準備
           </button>
-          {model === "2b-speculative" && (
-            <p className="hint">
-              補助モデル約573MBも端末に保存し、メモリ使用量が増えます。高速化は実験段階です。補助モデルを使えない場合は通常の2Bで処理し、必要に応じてCPUに切り替えます。
-            </p>
-          )}
           <p className="hint">
             準備時または初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合も、同じモデルをCPUで処理します。
           </p>

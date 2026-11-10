@@ -65,13 +65,10 @@ it("preserves an explicitly saved 2B model", async () => {
   expect(await readTranslationSettings()).toEqual({ kind: "browser", model: "2b" });
 });
 
-it("saves and restores the experimental browser model", async () => {
-  let stored = {};
-  vi.spyOn(browser.storage.local, "set").mockImplementation(async (value) => {
-    stored = value;
-  });
-  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
-  await saveTranslationProvider({ kind: "browser", model: "2b-speculative" });
-  expect(await readTranslationModel()).toBe("2b-speculative");
-  expect(await readTranslationSettings()).toEqual({ kind: "browser", model: "2b-speculative" });
+it("defaults a removed experimental model selection to browser 0.8B", async () => {
+  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({
+    translationModel: "2b-speculative",
+  }));
+  expect(await readTranslationModel()).toBe("0.8b");
+  expect(await readTranslationSettings()).toEqual({ kind: "browser", model: "0.8b" });
 });

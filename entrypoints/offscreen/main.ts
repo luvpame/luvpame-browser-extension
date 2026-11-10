@@ -4,6 +4,7 @@ import { convertHtml, writeClipboard } from "../../lib/offscreen-copy";
 import { isRecord } from "../../lib/copy-protocol";
 import {
   OFFSCREEN_PREPARE_TRANSLATION,
+  OFFSCREEN_PREWARM_TRANSLATION,
   TRANSLATE,
   TRANSLATE_BATCH,
   REPRIORITIZE_TRANSLATIONS,
@@ -27,7 +28,10 @@ type TranslationJob = { controller: AbortController; distance: number };
 const translations = new Map<string, Map<string, TranslationJob>>();
 browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
   if (sender.id !== browser.runtime.id || sender.tab || !isRecord(message)) return;
-  if (message.type === OFFSCREEN_PREPARE_TRANSLATION) {
+  if (
+    message.type === OFFSCREEN_PREPARE_TRANSLATION ||
+    message.type === OFFSCREEN_PREWARM_TRANSLATION
+  ) {
     if (!isTranslationProvider(message.provider) || message.provider.kind !== "browser") {
       respond({ ok: false, error: "ブラウザ内翻訳のモデルが不正です。" });
       return;
@@ -35,9 +39,12 @@ browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
     const { model } = message.provider;
     void (async () => {
       try {
-        const result = await (
-          await import("../../features/translate/engine")
-        ).prepareTranslation(model, {
+        const engine = await import("../../features/translate/engine");
+        const prepare =
+          message.type === OFFSCREEN_PREWARM_TRANSLATION
+            ? engine.prewarmTranslation
+            : engine.prepareTranslation;
+        const result = await prepare(model, {
           signal: new AbortController().signal,
           onProgress: () => {},
         });

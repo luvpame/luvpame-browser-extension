@@ -4,12 +4,15 @@ import type {
   RawCompletionChunk,
   WllamaConfig,
   Wllama,
+  Model,
 } from "@wllama/wllama";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 type CompletionOptions = RawCompletionParams & { onData: (chunk: RawCompletionChunk) => void };
 type ModelLoadOptions = NonNullable<Parameters<Wllama["loadModelFromUrl"]>[1]>;
 const mocks = vi.hoisted(() => ({
+  cachedModels: vi.fn<() => Promise<Model[]>>(),
+  loadCached: vi.fn(),
   load: vi.fn<(url: string, params: ModelLoadOptions) => Promise<void>>(),
   complete: vi.fn(),
   exit: vi.fn(),
@@ -18,11 +21,15 @@ const mocks = vi.hoisted(() => ({
   construct: vi.fn<(paths: unknown, config?: WllamaConfig) => void>(),
 }));
 vi.mock("@wllama/wllama", () => ({
+  ModelManager: class {
+    getModels = mocks.cachedModels;
+  },
   Wllama: class {
     constructor(paths: unknown, config?: WllamaConfig) {
       mocks.construct(paths, config);
     }
     loadModelFromUrl = mocks.load;
+    loadModel = mocks.loadCached;
     createCompletion = mocks.complete;
     exit = mocks.exit;
     setCompat = mocks.setCompat;
@@ -57,6 +64,8 @@ beforeEach(() => {
   vi.resetAllMocks();
   mocks.gpu.mockResolvedValue({});
   vi.stubGlobal("navigator", { hardwareConcurrency: 4, gpu: { requestAdapter: mocks.gpu } });
+  mocks.cachedModels.mockResolvedValue([]);
+  mocks.loadCached.mockResolvedValue(undefined);
   mocks.load.mockResolvedValue(undefined);
   mocks.exit.mockResolvedValue(undefined);
   mocks.complete.mockImplementation(async (params: CompletionOptions) => {
@@ -67,6 +76,54 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("translate", () => {
+  it("prewarms only saved models and reuses them without downloading or generating text", async () => {
+    const { Model: CachedModel } =
+      await vi.importActual<typeof import("@wllama/wllama")>("@wllama/wllama");
+    const { ModelManager } = await import("@wllama/wllama");
+    const cached = new CachedModel(
+      new ModelManager(),
+      "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
+    );
+    mocks.cachedModels.mockResolvedValue([cached]);
+    const { prewarmTranslation, translate } = await import("./engine");
+    await prewarmTranslation("0.8b", options());
+    expect(mocks.loadCached).toHaveBeenCalledWith(
+      cached,
+      expect.objectContaining({ warmup: true }),
+    );
+    expect(mocks.complete).not.toHaveBeenCalled();
+    expect(mocks.load).not.toHaveBeenCalled();
+    await translate("ready", "ja", "0.8b", options());
+    expect(mocks.loadCached).toHaveBeenCalledOnce();
+    expect(mocks.load).not.toHaveBeenCalled();
+  });
+
+  it("leaves the loaded model intact when a saved model is absent", async () => {
+    const { prewarmTranslation, translate } = await import("./engine");
+    await translate("first", "ja", "0.8b", options());
+    await prewarmTranslation("2b", options());
+    await translate("next", "ja", "0.8b", options());
+    expect(mocks.load).toHaveBeenCalledOnce();
+    expect(mocks.loadCached).not.toHaveBeenCalled();
+    expect(mocks.exit).not.toHaveBeenCalled();
+  });
+
+  it("permits normal translation after a saved model fails to prewarm", async () => {
+    const { Model: CachedModel } =
+      await vi.importActual<typeof import("@wllama/wllama")>("@wllama/wllama");
+    const { ModelManager } = await import("@wllama/wllama");
+    const cached = new CachedModel(
+      new ModelManager(),
+      "https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf",
+    );
+    mocks.cachedModels.mockResolvedValue([cached]);
+    mocks.loadCached.mockRejectedValue(new Error("cache deleted"));
+    const { prewarmTranslation, translate } = await import("./engine");
+    await expect(prewarmTranslation("0.8b", options())).rejects.toThrow("cache deleted");
+    expect(mocks.load).not.toHaveBeenCalled();
+    expect(await translate("retry", "ja", "0.8b", options())).toMatchObject({ text: "翻訳結果" });
+  });
+
   it.each([true, false])("reuses prompt KV only for CPU (GPU: %s)", async (gpu) => {
     const { translate } = await import("./engine");
     mocks.gpu.mockResolvedValue(gpu ? {} : null);
@@ -104,85 +161,6 @@ describe("translate", () => {
     expect(await preparing).toEqual({ device: "gpu" });
     expect(mocks.load).toHaveBeenCalledTimes(2);
     expect(mocks.complete).toHaveBeenCalledOnce();
-  });
-
-  it("loads a separate GPU draft with one slot and reuses the experimental model", async () => {
-    const { translate } = await import("./engine");
-    await translate("spec first", "ja", "2b-speculative", options());
-    await translate("spec next", "ja", "2b-speculative", options());
-    expect(mocks.load).toHaveBeenCalledOnce();
-    expect(mocks.load).toHaveBeenCalledWith(
-      expect.stringContaining("plamo-3-translate-2b-"),
-      expect.objectContaining({
-        n_ctx: 4096,
-        n_parallel: 1,
-        n_gpu_layers: 999,
-        warmup: true,
-        spec_draft_model: expect.stringContaining("plamo-3-translate-0.8b-"),
-        spec_draft_ngl: 999,
-        spec_draft_n_max: 4,
-      }),
-    );
-    await translate("spec first", "ja", "2b", options());
-    expect(mocks.complete).toHaveBeenCalledTimes(3);
-    expect(mocks.load).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    "throw",
-    "failed to initialize speculative decoding",
-    "speculative decoding not supported",
-    "llama_model_load: offloaded 0/33 layers to GPU",
-  ])(
-    "retries plain GPU 2B after a draft failure (%s) and remembers the loaded fallback",
-    async (failure) => {
-      const { translate } = await import("./engine");
-      mocks.load.mockImplementationOnce(async () => {
-        if (failure === "throw") throw new Error("draft unavailable");
-        mocks.construct.mock.calls.at(-1)?.[1]?.logger?.error(failure);
-      });
-      expect((await translate("spec fallback", "ja", "2b-speculative", options())).device).toBe(
-        "gpu",
-      );
-      await translate("spec fallback next", "ja", "2b-speculative", options());
-      expect(mocks.load).toHaveBeenCalledTimes(2);
-      expect(mocks.exit).toHaveBeenCalledOnce();
-      expect(mocks.load.mock.calls[1]?.[0]).toContain("plamo-3-translate-2b-");
-      expect(mocks.load.mock.calls[1]?.[1]).toMatchObject({ n_gpu_layers: 999, n_parallel: 1 });
-      expect(mocks.load.mock.calls[1]?.[1]).not.toHaveProperty("spec_draft_model");
-    },
-  );
-
-  it("falls back from draft GPU through plain GPU to the same CPU 2B", async () => {
-    const { translate } = await import("./engine");
-    mocks.load.mockRejectedValueOnce(new Error("draft unavailable"));
-    mocks.load.mockRejectedValueOnce(new Error("GPU unavailable"));
-    expect((await translate("spec cpu", "ja", "2b-speculative", options())).device).toBe("cpu");
-    expect(
-      mocks.load.mock.calls.map(([url, params]) => [
-        url.includes("plamo-3-translate-2b-"),
-        params.n_gpu_layers,
-      ]),
-    ).toEqual([
-      [true, 999],
-      [true, 999],
-      [true, 0],
-    ]);
-    expect(mocks.load.mock.calls[2]?.[1]).not.toHaveProperty("spec_draft_model");
-  });
-
-  it("stops draft fallback immediately on cancellation", async () => {
-    const { translate } = await import("./engine");
-    const controller = new AbortController();
-    mocks.load.mockImplementationOnce(async () => {
-      controller.abort();
-      throw controller.signal.reason;
-    });
-    await expect(
-      translate("spec abort", "ja", "2b-speculative", { ...options(), signal: controller.signal }),
-    ).rejects.toMatchObject({ name: "AbortError" });
-    expect(mocks.load).toHaveBeenCalledOnce();
-    expect(mocks.complete).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -537,36 +515,36 @@ it("starts one cold GPU chunk, then drains whole two-chunk waves before switchin
   expect(peak).toBe(2);
 });
 
-it.each([
-  [false, "2b"],
-  [true, "2b-speculative"],
-] as const)("keeps %s GPU / %s inference serial within one context budget", async (gpu, model) => {
-  const { translate } = await import("./engine");
-  mocks.gpu.mockResolvedValue(gpu ? {} : null);
-  const finish: (() => void)[] = [];
-  mocks.complete.mockImplementation(async (params: CompletionOptions) => {
-    await new Promise<void>((resolve) => {
-      finish.push(resolve);
+it.each(["0.8b", "2b"] as const)(
+  "keeps CPU %s inference serial within one context budget",
+  async (model) => {
+    const { translate } = await import("./engine");
+    mocks.gpu.mockResolvedValue(null);
+    const finish: (() => void)[] = [];
+    mocks.complete.mockImplementation(async (params: CompletionOptions) => {
+      await new Promise<void>((resolve) => {
+        finish.push(resolve);
+      });
+      params.onData(chunk("完了"));
     });
-    params.onData(chunk("完了"));
-  });
-  const first = translate("first serial", "ja", model, options());
-  const second = translate("second serial", "ja", model, options());
-  await vi.waitFor(() => expect(finish).toHaveLength(1));
-  expect(mocks.load).toHaveBeenCalledWith(
-    expect.any(String),
-    expect.objectContaining({
-      n_parallel: 1,
-      n_ctx: 4096,
-      n_gpu_layers: gpu ? 999 : 0,
-      swa_full: true,
-    }),
-  );
-  finish[0]?.();
-  await vi.waitFor(() => expect(finish).toHaveLength(2));
-  finish[1]?.();
-  await Promise.all([first, second]);
-});
+    const first = translate("first serial", "ja", model, options());
+    const second = translate("second serial", "ja", model, options());
+    await vi.waitFor(() => expect(finish).toHaveLength(1));
+    expect(mocks.load).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        n_parallel: 1,
+        n_ctx: 4096,
+        n_gpu_layers: 0,
+        swa_full: true,
+      }),
+    );
+    finish[0]?.();
+    await vi.waitFor(() => expect(finish).toHaveLength(2));
+    finish[1]?.();
+    await Promise.all([first, second]);
+  },
+);
 
 it("cancels one GPU chunk without interrupting the other chunk or unloading its model", async () => {
   const { translate } = await import("./engine");

@@ -7,6 +7,7 @@ import { sendPageTranslationMessage } from "./page-bridge";
 import {
   PREPARE_TRANSLATION,
   OFFSCREEN_PREPARE_TRANSLATION,
+  OFFSCREEN_PREWARM_TRANSLATION,
   isPrepareTranslationResult,
   isTranslationModel,
   type PrepareTranslationResult,
@@ -36,6 +37,22 @@ import {
 } from "./shared";
 
 export const registerTranslationBackground = (): void => {
+  let prewarming = Promise.resolve();
+  let prewarmRevision = 0;
+  const prewarm = () => {
+    const revision = ++prewarmRevision;
+    prewarming = prewarming
+      .then(() => menuSync)
+      .then(async () => {
+        if (revision !== prewarmRevision || !(await readFeatures()).translationEnabled) return;
+        const provider = await readTranslationSettings();
+        if (provider.kind !== "browser") return;
+        await ensureOffscreen();
+        if (revision !== prewarmRevision) return;
+        await browser.runtime.sendMessage({ type: OFFSCREEN_PREWARM_TRANSLATION, provider });
+      })
+      .catch(console.error);
+  };
   const sessions = new Map<
     string,
     {
@@ -287,10 +304,15 @@ export const registerTranslationBackground = (): void => {
   browser.runtime.onInstalled.addListener(registerMenus);
   browser.runtime.onStartup.addListener(syncMenus);
   browser.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !("translationEnabled" in changes)) return;
-    syncMenus();
+    if (area !== "local") return;
+    if ("translationEnabled" in changes) syncMenus();
+    if (
+      ["translationEnabled", "translationBackend", "translationModel"].some((key) => key in changes)
+    )
+      prewarm();
   });
   registerMenus();
+  prewarm();
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (tab?.id === undefined) return;
     if (info.menuItemId === PAGE_TRANSLATION) void toggle(tab.id);
