@@ -22,8 +22,7 @@ export function Sidepanel() {
   const [page, setPage] = useState<Page>();
   const [title, setTitle] = useState("");
   const [paragraphs, setParagraphs] = useState<string[]>([]);
-  const [status, setStatus] = useState("現在のページを確認しています…");
-  const [cpu, setCpu] = useState(false);
+  const [status, setStatus] = useState("");
   const [attempt, setAttempt] = useState(0);
   const [failed, setFailed] = useState(false);
   const [completed, setCompleted] = useState(0);
@@ -111,7 +110,6 @@ export function Sidepanel() {
     setTitle("");
     setParagraphs([]);
     setCompleted(0);
-    setCpu(false);
     setFailed(false);
     if (!enabled) {
       setStatus("翻訳は共通設定でOFFになっています。");
@@ -122,6 +120,7 @@ export function Sidepanel() {
       setStatus(articleError || "HTTP/HTTPSの通常のWebページを開いてください。");
       return;
     }
+    setStatus("");
     let activeRequest: { id: string; update: (value: unknown) => void } | undefined;
     const onProgress = (message: unknown, sender: { id?: string; tab?: unknown }) => {
       if (
@@ -142,21 +141,17 @@ export function Sidepanel() {
       if (!texts.length) throw new Error("読み取れる本文がありません。");
       setTitle(page.title);
       const translated: string[] = [];
-      for (const [index, text] of texts.entries()) {
+      for (const text of texts) {
         const parts: string[] = [];
         for (const chunk of splitTranslationText(text)) {
           if (disposed) return;
-          setStatus(`やさしい日本語に訳しています… ${index + 1}/${texts.length}`);
           const requestId = crypto.randomUUID();
-          let hasText = false;
           activeRequest = {
             id: requestId,
             update: (update) => {
               if (!isTranslationUpdate(update)) return;
-              if (update.kind === "text") {
-                hasText ||= Boolean(update.text);
+              if (update.kind === "text")
                 setParagraphs([...translated, [...parts, update.text].join("\n")]);
-              } else if (!hasText) setStatus(update.message);
             },
           };
           let result: unknown;
@@ -175,7 +170,6 @@ export function Sidepanel() {
           if (disposed) return;
           if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
           if (!result.ok) throw new Error(result.error);
-          if (result.device === "cpu") setCpu(true);
           parts.push(result.text);
           setParagraphs([...translated, parts.join("\n")]);
         }
@@ -183,7 +177,6 @@ export function Sidepanel() {
         setParagraphs([...translated]);
         setCompleted(translated.length);
       }
-      if (!disposed) setStatus("記事全体の翻訳が完了しました。");
     };
     void run().catch((error) => {
       if (disposed) return;
@@ -210,12 +203,11 @@ export function Sidepanel() {
           ブラウザ実行の初回はモデルのダウンロードに時間がかかります。Ollamaは共通設定で選べます。
         </p>
       </header>
-      <div className="reading-status" data-failed={failed}>
-        <p role="status" aria-busy={busy}>
-          <span className="translation-spinner" aria-hidden="true" />
+      <div className="reading-status" data-failed={failed} hidden={!busy && !status}>
+        <p role="status" aria-busy={busy} aria-label={busy ? "翻訳中" : undefined}>
+          <span className="translation-indicator" aria-hidden="true" />
           <span>{status}</span>
         </p>
-        {cpu && <p className="hint">CPUで翻訳しています。完了まで時間がかかる場合があります。</p>}
         {failed && <button onClick={() => setAttempt((value) => value + 1)}>再試行</button>}
       </div>
       {title && <h2 className="reading-title">{title}</h2>}

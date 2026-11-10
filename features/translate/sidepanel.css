@@ -51,12 +51,21 @@
   line-height: 1.8;
 }
 
-.reading-status[data-failed="true"] {
-  border-color: var(--accent);
+.reading-status:has([aria-busy="true"]) {
+  padding: 12px 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
 }
 
-.reading-status .hint {
-  margin: 10px 0 0;
+.reading-status .translation-indicator {
+  width: 120px;
+  margin-inline-end: 0;
+  color: var(--accent);
+}
+
+.reading-status[data-failed="true"] {
+  border-color: var(--accent);
 }
 
 .reading-status button {

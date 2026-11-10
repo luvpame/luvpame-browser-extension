@@ -148,15 +148,11 @@ export function createTranslationController({
     for (const chunk of splitTranslationText(text)) {
       if (!current()) return undefined;
       const requestId = crypto.randomUUID();
-      let hasText = false;
       requests.set(requestId, {
         sessionId: id,
         update: (value) => {
           if (!current()) return;
-          if (value.kind === "text") {
-            hasText ||= Boolean(value.text);
-            output([...parts, value.text].join("\n"));
-          } else if (!parts.length && !hasText) output(value.message);
+          if (value.kind === "text") output([...parts, value.text].join("\n"));
         },
       });
       try {
@@ -179,10 +175,10 @@ export function createTranslationController({
     }
     return parts.join("\n");
   };
-  const createOutput = (element: Element, text: string) => {
+  const createOutput = (element: Element) => {
     const host = doc.createElement("div");
     host.setAttribute(OWN, "");
-    host.setAttribute("aria-busy", "false");
+    host.setAttribute("aria-busy", "true");
     host.style.cssText =
       "all:initial;display:block;color:inherit;margin:0.35em 0 0.75em;padding:8px 12px;background:color-mix(in srgb,currentColor 4%,transparent);border-inline-start:1px solid color-mix(in srgb,currentColor 22%,transparent);";
     const original = win.getComputedStyle(element);
@@ -200,15 +196,15 @@ export function createTranslationController({
     const shadow = host.attachShadow({ mode: "open" });
     const style = doc.createElement("style");
     style.textContent = loadingCss;
-    const spinner = doc.createElement("span");
-    spinner.className = "translation-spinner";
-    spinner.setAttribute("aria-hidden", "true");
+    const indicator = doc.createElement("span");
+    indicator.className = "translation-indicator";
+    indicator.setAttribute("role", "status");
+    indicator.setAttribute("aria-label", "翻訳中");
     const output = doc.createElement("div");
     output.setAttribute("data-translation-text", "");
     output.lang = "ja";
     output.style.cssText = "display:inline;white-space:pre-wrap;overflow-wrap:anywhere;";
-    output.textContent = text;
-    shadow.append(style, spinner, output);
+    shadow.append(style, indicator, output);
     return { host, output };
   };
   const pump = async () => {
@@ -219,7 +215,6 @@ export function createTranslationController({
     const tasks = new Set<Promise<void>>();
     const processEntry = async (element: Element, entry: Entry) => {
       entry.state = "running";
-      entry.host.setAttribute("aria-busy", "true");
       const current = () =>
         active &&
         epoch === generation &&
@@ -305,7 +300,7 @@ export function createTranslationController({
       if (entries.has(element)) continue;
       const entry: Entry = {
         text: sourceText(element),
-        ...createOutput(element, "翻訳を待っています…"),
+        ...createOutput(element),
         state: "queued",
       };
       entries.set(element, entry);
@@ -433,11 +428,11 @@ export function createTranslationController({
       output.className = "text";
       output.lang = "ja";
       output.setAttribute("role", "status");
-      output.textContent = "日本語に訳しています…";
-      const spinner = doc.createElement("span");
-      spinner.className = "translation-spinner";
-      spinner.setAttribute("aria-hidden", "true");
-      panel.append(close, spinner, output);
+      output.setAttribute("aria-label", "翻訳中");
+      const indicator = doc.createElement("span");
+      indicator.className = "translation-indicator";
+      indicator.setAttribute("aria-hidden", "true");
+      panel.append(close, indicator, output);
       button.replaceWith(panel);
       close.focus();
       void translate(
@@ -457,7 +452,10 @@ export function createTranslationController({
             output.textContent = error instanceof Error ? error.message : "翻訳に失敗しました。";
         })
         .finally(() => {
-          if (selectionSession === id) panel.setAttribute("aria-busy", "false");
+          if (selectionSession === id) {
+            panel.setAttribute("aria-busy", "false");
+            output.removeAttribute("aria-label");
+          }
         });
     });
     shadow.append(style, button);

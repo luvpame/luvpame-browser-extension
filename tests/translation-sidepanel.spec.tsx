@@ -93,9 +93,8 @@ it("translates every article paragraph into easy Japanese when the active tab ex
     "やさしい訳: First paragraph.",
     "やさしい訳: Second paragraph.",
   ]);
-  expect(container.querySelector('[role="status"]')?.textContent).toBe(
-    "記事全体の翻訳が完了しました。",
-  );
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("");
+  expect(container.querySelector(".reading-status")?.hasAttribute("hidden")).toBe(true);
   expect(container.querySelector('[role="status"]')?.getAttribute("aria-busy")).toBe("false");
   for (const text of article.paragraphs)
     expect(send).toHaveBeenCalledWith(
@@ -158,7 +157,7 @@ it("clears visible translations and cancels pending work when translation is dis
 });
 
 it.each([
-  { ok: true, text: "翻訳した記事", device: "gpu" },
+  { ok: true, text: "翻訳した記事", device: "cpu" },
   { ok: false, error: "翻訳に失敗しました。" },
 ] satisfies TranslationResult[])(
   "keeps the article busy until the translation settles (%#)",
@@ -173,13 +172,20 @@ it.each([
     });
     await act(async () => root.render(<Sidepanel />));
     const status = container.querySelector('[role="status"]');
-    const spinner = status?.querySelector(".translation-spinner");
+    const indicator = status?.querySelector(".translation-indicator");
     expect(status?.getAttribute("aria-busy")).toBe("true");
-    expect(status?.textContent).toBe("やさしい日本語に訳しています… 1/1");
+    expect(status?.textContent).toBe("");
+    expect(status?.getAttribute("aria-label")).toBe("翻訳中");
+    expect(container.querySelector(".reading-status")?.hasAttribute("hidden")).toBe(false);
     await act(async () => finish?.(result));
     expect(status?.getAttribute("aria-busy")).toBe("false");
-    expect(status?.querySelector(".translation-spinner")).toBe(spinner);
-    expect(status?.textContent).toBe(result.ok ? "記事全体の翻訳が完了しました。" : result.error);
+    expect(status?.querySelector(".translation-indicator")).toBe(indicator);
+    expect(status?.textContent).toBe(result.ok ? "" : result.error);
+    expect(status?.hasAttribute("aria-label")).toBe(false);
+    expect(container.querySelector(".reading-status")?.hasAttribute("hidden")).toBe(result.ok);
+    expect(container.querySelector("article")?.textContent).toBe(result.ok ? result.text : "");
+    expect(container.textContent).not.toContain("CPUで翻訳中");
+    expect(container.querySelector("button")?.textContent).toBe(result.ok ? undefined : "再試行");
   },
 );
 
@@ -292,6 +298,18 @@ it("shows partial paragraphs without marking them complete and rejects stale chu
       { id: browser.runtime.id },
       vi.fn(),
     );
+  await act(async () => {
+    progress?.(
+      {
+        type: "luvpame:translation-progress",
+        ...requests[0]!,
+        update: { kind: "status", message: "翻訳中" },
+      },
+      { id: browser.runtime.id },
+      vi.fn(),
+    );
+  });
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("");
   await act(async () => {
     emit(requests[0]!, "途中の訳");
   });

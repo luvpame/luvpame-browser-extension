@@ -248,7 +248,7 @@ describe("ページ翻訳", () => {
   it.each([
     { response: success("翻訳した文章"), text: "翻訳した文章" },
     { response: { ok: false, error: "翻訳に失敗しました。" }, text: "翻訳に失敗しました。" },
-  ])("ラベルを付けずに待機・進捗・応答を訳文領域へ表示する（%#）", async ({ response, text }) => {
+  ])("待機・進捗の文言を表示せず、途中訳・応答だけを表示する（%#）", async ({ response, text }) => {
     document.body.innerHTML = "<p>Hello world.</p>";
     let resolve: ((value: unknown) => void) | undefined;
     let sessionId = "";
@@ -265,17 +265,21 @@ describe("ページ翻訳", () => {
     controller.toggle();
     const host = document.querySelector("[data-luvpame-translation]");
     const shadow = host?.shadowRoot;
-    const spinner = shadow?.querySelector(".translation-spinner");
-    expect(output()).toEqual(["翻訳を待っています…"]);
+    const indicator = shadow?.querySelector(".translation-indicator");
+    expect(output()).toEqual([""]);
     expect(host?.getAttribute("aria-busy")).toBe("true");
-    expect(spinner?.getAttribute("aria-hidden")).toBe("true");
-    expect(spinner?.textContent).toBe("");
+    expect(indicator?.getAttribute("role")).toBe("status");
+    expect(indicator?.getAttribute("aria-label")).toBe("翻訳中");
+    expect(indicator?.textContent).toBe("");
     controller.progress(sessionId, requestId, {
       kind: "status",
-      message: "モデルを準備しています…",
+      message: "準備中",
     });
-    expect(output()).toEqual(["モデルを準備しています…"]);
-    expect(shadow?.querySelector(".translation-spinner")).toBe(spinner);
+    expect(output()).toEqual([""]);
+    controller.progress(sessionId, requestId, { kind: "text", text: "途中の訳" });
+    controller.progress(sessionId, requestId, { kind: "status", message: "表示しない" });
+    expect(output()).toEqual(["途中の訳"]);
+    expect(shadow?.querySelector(".translation-indicator")).toBe(indicator);
     resolve?.(response);
     await tick();
     expect(output()).toEqual([text]);
@@ -283,7 +287,7 @@ describe("ページ翻訳", () => {
     expect(shadow?.querySelector("[data-translation-text]")?.textContent).toBe(text);
   });
 
-  it("順番待ちの段落は進捗で書き換えず、実行中の段落だけbusyにする", async () => {
+  it("順番待ちから全段落をbusyにし、完了した段落だけ解除する", async () => {
     document.body.innerHTML =
       "<p>First paragraph.</p><p>Second paragraph.</p><p>Third paragraph.</p><p>Fourth paragraph.</p><p>Fifth paragraph.</p>";
     const pending: ((value: unknown) => void)[] = [];
@@ -302,16 +306,10 @@ describe("ページ翻訳", () => {
       "true",
       "true",
       "true",
-      "false",
+      "true",
     ]);
-    controller.progress(sessionId, requestId, { kind: "status", message: "日本語に訳しています…" });
-    expect(output()).toEqual([
-      "日本語に訳しています…",
-      "翻訳を待っています…",
-      "翻訳を待っています…",
-      "翻訳を待っています…",
-      "翻訳を待っています…",
-    ]);
+    controller.progress(sessionId, requestId, { kind: "status", message: "翻訳中" });
+    expect(output()).toEqual(["", "", "", "", ""]);
     pending[0]!(success("最初の訳"));
     await tick();
     expect(hosts.map((host) => host.getAttribute("aria-busy"))).toEqual([
@@ -411,18 +409,20 @@ describe("選択翻訳", () => {
     const shadow = document.querySelector('[data-luvpame-translation="selection"]')?.shadowRoot;
     shadow?.querySelector("button")?.click();
     const panel = shadow?.querySelector('[role="dialog"]');
-    const spinner = panel?.querySelector(".translation-spinner");
+    const indicator = panel?.querySelector(".translation-indicator");
     expect(panel?.getAttribute("aria-busy")).toBe("true");
-    expect(panel?.querySelector('[role="status"]')?.textContent).toBe("日本語に訳しています…");
+    expect(panel?.querySelector('[role="status"]')?.textContent).toBe("");
+    expect(panel?.querySelector('[role="status"]')?.getAttribute("aria-label")).toBe("翻訳中");
     controller.progress(sessionId, requestId, {
       kind: "status",
-      message: "翻訳の準備をしています…",
+      message: "準備中",
     });
+    expect(panel?.querySelector('[role="status"]')?.textContent).toBe("");
     controller.progress(sessionId, requestId, { kind: "text", text: "選択の途中訳" });
     controller.progress(sessionId, requestId, { kind: "status", message: "上書きしない" });
     controller.progress(sessionId, "old-request", { kind: "text", text: "古い要求" });
     expect(panel?.querySelector('[role="status"]')?.textContent).toBe("選択の途中訳");
-    expect(panel?.querySelector(".translation-spinner")).toBe(spinner);
+    expect(panel?.querySelector(".translation-indicator")).toBe(indicator);
     finish?.(response);
     await tick();
     expect(panel?.getAttribute("aria-busy")).toBe("false");
