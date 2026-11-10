@@ -633,6 +633,65 @@ describe("選択翻訳", () => {
     document.dispatchEvent(new Event("selectionchange"));
   }
 
+  it("ドラッグ完了位置に表示し、その後のマウス移動には追従しない", () => {
+    mount(async () => success());
+    document.dispatchEvent(new MouseEvent("mousedown", { button: 0 }));
+    select();
+    expect(document.querySelector('[data-luvpame-translation="selection"]')).toBeNull();
+    document.dispatchEvent(new MouseEvent("mouseup", { button: 0, clientX: 360, clientY: 220 }));
+    const host = document.querySelector<HTMLElement>('[data-luvpame-translation="selection"]')!;
+    expect(host.style.left).toBe("370px");
+    expect(host.style.top).toBe("232px");
+    document.dispatchEvent(new MouseEvent("mousemove", { clientX: 600, clientY: 400 }));
+    document.dispatchEvent(new Event("selectionchange"));
+    expect(host.style.left).toBe("370px");
+    expect(host.style.top).toBe("232px");
+  });
+
+  it("同じ文章を選択し直した場合も新しい完了位置に表示する", () => {
+    mount(async () => success());
+    select();
+    document.dispatchEvent(new MouseEvent("mousedown", { button: 0 }));
+    document.dispatchEvent(new MouseEvent("mouseup", { button: 0, clientX: 460, clientY: 240 }));
+    const host = document.querySelector<HTMLElement>('[data-luvpame-translation="selection"]')!;
+    expect(host.style.left).toBe("470px");
+    expect(host.style.top).toBe("252px");
+  });
+
+  it("キーボードで選択した場合は選択範囲の近くに表示する", () => {
+    mount(async () => success());
+    select();
+    const host = document.querySelector<HTMLElement>('[data-luvpame-translation="selection"]')!;
+    expect(host.style.left).toBe("30px");
+    expect(host.style.top).toBe("52px");
+  });
+
+  it("画面右下ではボタンと翻訳パネルを画面内に収める", async () => {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
+      function (this: HTMLElement) {
+        const panel = this.shadowRoot?.querySelector('[role="dialog"]');
+        return new DOMRect(0, 0, panel ? 400 : 40, panel ? 260 : 40);
+      },
+    );
+    mount(async () => success());
+    document.dispatchEvent(new MouseEvent("mousedown", { button: 0 }));
+    select();
+    document.dispatchEvent(
+      new MouseEvent("mouseup", {
+        button: 0,
+        clientX: window.innerWidth - 2,
+        clientY: window.innerHeight - 2,
+      }),
+    );
+    const host = document.querySelector<HTMLElement>('[data-luvpame-translation="selection"]')!;
+    expect(Number.parseFloat(host.style.left) + 40).toBeLessThanOrEqual(window.innerWidth - 8);
+    expect(Number.parseFloat(host.style.top) + 40).toBeLessThanOrEqual(window.innerHeight - 8);
+    host.shadowRoot?.querySelector("button")?.click();
+    await tick();
+    expect(Number.parseFloat(host.style.left) + 400).toBeLessThanOrEqual(window.innerWidth - 8);
+    expect(Number.parseFloat(host.style.top) + 260).toBeLessThanOrEqual(window.innerHeight - 8);
+  });
+
   it("やさしいページ翻訳中も選択翻訳先は通常の日本語を使う", async () => {
     document.body.innerHTML = "<p>A selected English sentence.</p>";
     const requests: unknown[] = [];
@@ -761,8 +820,9 @@ describe("選択翻訳", () => {
     expect(
       document
         .querySelector('[data-luvpame-translation="selection"]')
-        ?.shadowRoot?.querySelector("button")?.textContent,
-    ).toBe("訳");
+        ?.shadowRoot?.querySelector("button")
+        ?.getAttribute("aria-label"),
+    ).toBe("選択した文章を日本語に翻訳");
   });
 
   it("選択位置のアイコンから安全なpopup訳を表示しEscapeで閉じる", async () => {
@@ -772,6 +832,7 @@ describe("選択翻訳", () => {
     const host = document.querySelector('[data-luvpame-translation="selection"]');
     const button = host?.shadowRoot?.querySelector("button");
     expect(button?.getAttribute("aria-label")).toBe("選択した文章を日本語に翻訳");
+    expect(button?.querySelector("svg")?.getAttribute("aria-hidden")).toBe("true");
     button?.click();
     await tick();
     expect(host?.shadowRoot?.querySelector('[role="status"]')?.textContent).toBe("選択した文章");
@@ -792,6 +853,30 @@ describe("選択翻訳", () => {
     expect(host?.shadowRoot?.querySelector('[role="status"]')?.textContent).toBe(
       "選択した図の文章",
     );
+  });
+
+  it("ページや本文内のスクロールで翻訳モーダルと処理中の要求を閉じない", async () => {
+    const pending = Promise.withResolvers<unknown>();
+    const send = vi.fn((message: unknown) =>
+      isTranslationRequest(message) ? pending.promise : Promise.resolve(undefined),
+    );
+    mount(send);
+    select();
+    const host = document.querySelector('[data-luvpame-translation="selection"]')!;
+    host.shadowRoot?.querySelector("button")?.click();
+    window.dispatchEvent(new Event("scroll"));
+    host.shadowRoot?.querySelector(".text")?.dispatchEvent(new Event("scroll", { composed: true }));
+    expect(host.isConnected).toBe(true);
+    expect(send).not.toHaveBeenCalledWith(expect.objectContaining({ type: CANCEL_TRANSLATION }));
+    pending.resolve(success("スクロール後も届く訳文"));
+    await tick();
+    expect(host.shadowRoot?.querySelector('[role="status"]')?.textContent).toBe(
+      "スクロール後も届く訳文",
+    );
+    window.dispatchEvent(new Event("scroll"));
+    expect(host.isConnected).toBe(true);
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    expect(host.isConnected).toBe(false);
   });
 
   it("選択変更、スクロール、機能OFFでUIと保留中の翻訳を閉じる", () => {

@@ -1,0 +1,110 @@
+:host {
+  color-scheme: light dark;
+  --ink: light-dark(#252529, #ededf0);
+  --muted: light-dark(#73737d, #a3a3ad);
+  --surface: light-dark(#fff, #232326);
+  --border: light-dark(#e8e8ec, #3b3b40);
+  --font:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", Meiryo,
+    sans-serif;
+}
+button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
+  color: var(--ink);
+  font-family: var(--font);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+button:focus-visible {
+  outline: 2px solid light-dark(#6366a0, #b4b6ef);
+  outline-offset: 2px;
+}
+button:active {
+  transform: scale(0.97);
+}
+.trigger {
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow:
+    0 4px 16px #00000012,
+    0 1px 3px #0000000d;
+}
+.panel {
+  box-sizing: border-box;
+  width: 400px;
+  max-width: calc(100vw - 16px);
+  max-height: min(520px, calc(100dvh - 16px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  color: var(--ink);
+  background: var(--surface);
+  box-shadow:
+    0 16px 48px #00000014,
+    0 4px 12px #0000000a,
+    0 0 0 1px #00000003;
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.8;
+  text-align: left;
+}
+.header {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  padding: 12px 12px 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.language {
+  color: var(--muted);
+  font-size: 12px;
+}
+.close {
+  width: 32px;
+  height: 32px;
+  margin-left: auto;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+}
+.text {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 18px 20px 22px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.text:empty {
+  display: none;
+}
+.panel > .translation-indicator {
+  flex-shrink: 0;
+  margin: 20px;
+  color: var(--muted);
+}
+@media (hover: hover) and (pointer: fine) {
+  button:hover {
+    background: light-dark(#f4f4f6, #303034);
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  button {
+    transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+  }
+}

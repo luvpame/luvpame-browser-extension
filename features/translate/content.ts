@@ -1,5 +1,6 @@
 import { browser } from "wxt/browser";
 import loadingCss from "./loading.css?inline";
+import selectionCss from "./selection.css?inline";
 import {
   CANCEL_TRANSLATION,
   CANCEL_TRANSLATION_REQUEST,
@@ -109,7 +110,8 @@ export function createTranslationController({
   let selectionSession = "";
   let selectionText = "";
   let selectionHost: HTMLElement | undefined;
-  let selectionRect: DOMRect | undefined;
+  let selectionAnchor: { x: number; y: number } | undefined;
+  let selecting = false;
   let firstPageRequest = true;
   let renderFrame: number | undefined;
   let positionFrame: number | undefined;
@@ -565,12 +567,16 @@ export function createTranslationController({
     selectionHost = undefined;
   };
   const positionSelection = () => {
-    if (!selectionHost || !selectionRect) return;
-    selectionHost.style.left = `${Math.max(8, Math.min(selectionRect.left, win.innerWidth - 320))}px`;
-    selectionHost.style.top = `${Math.max(8, Math.min(selectionRect.bottom + 8, win.innerHeight - 180))}px`;
+    if (!selectionHost || !selectionAnchor) return;
+    const { width, height } = selectionHost.getBoundingClientRect();
+    const { x, y } = selectionAnchor;
+    const left = Math.max(8, Math.min(x + 10, win.innerWidth - width - 8));
+    const top = y + 12 + height <= win.innerHeight - 8 ? y + 12 : y - height - 12;
+    selectionHost.style.left = `${left}px`;
+    selectionHost.style.top = `${Math.max(8, Math.min(top, win.innerHeight - height - 8))}px`;
   };
-  const onSelection = () => {
-    if (!enabled) return;
+  const onSelection = (anchor?: { x: number; y: number }) => {
+    if (!enabled || selecting) return;
     const selection = doc.getSelection();
     const text = selection?.toString().trim() ?? "";
     if (!text && selectionHost?.contains(doc.activeElement)) return;
@@ -584,79 +590,20 @@ export function createTranslationController({
     const fragment = range.cloneContents();
     if (fragment.querySelector(EXCLUDED)) return;
     selectionText = text;
-    selectionRect = range.getBoundingClientRect();
+    const rect = range.getBoundingClientRect();
+    selectionAnchor = anchor ?? { x: rect.left, y: rect.bottom };
     const host = doc.createElement("div");
     host.setAttribute(OWN, "selection");
     host.style.cssText =
       "all:initial;color-scheme:light dark;position:fixed;z-index:2147483647;max-width:calc(100vw - 16px);";
     const shadow = host.attachShadow({ mode: "open" });
     const style = doc.createElement("style");
-    style.textContent = `${loadingCss}
-      :host {
-        color-scheme: light dark;
-        --ink: light-dark(#262626, #eeeeee);
-        --surface: light-dark(#ffffff, #262626);
-        --border: light-dark(#e5e5e5, #525252);
-        --accent: light-dark(#525252, #d4d4d4);
-      }
-      button {
-        box-sizing: border-box;
-        min-width: 44px;
-        min-height: 44px;
-        padding: 9px 14px;
-        border: 1px solid var(--border);
-        border-radius: 10px;
-        background: var(--surface);
-        color: var(--ink);
-        font: 600 14px/1.5 system-ui, sans-serif;
-        cursor: pointer;
-        touch-action: manipulation;
-      }
-      button:focus-visible {
-        outline: 3px solid var(--accent);
-        outline-offset: 3px;
-      }
-      .panel {
-        box-sizing: border-box;
-        max-height: 60vh;
-        overflow: auto;
-        overscroll-behavior: contain;
-        width: 320px;
-        max-width: calc(100vw - 16px);
-        padding: 14px 18px 20px;
-        border: 1px solid var(--border);
-        border-radius: 14px;
-        color: var(--ink);
-        background: var(--surface);
-        font: 16px/1.8 system-ui, sans-serif;
-        box-shadow: 0 8px 28px #0000001a, 0 2px 6px #0000000a;
-      }
-      .panel button {
-        display: block;
-        margin: 0 0 12px auto;
-        min-height: 36px;
-        padding: 6px 12px;
-        font-weight: 500;
-      }
-      .text {
-        display: inline;
-        white-space: pre-wrap;
-        overflow-wrap: anywhere;
-        text-align: left;
-      }
-      @media (hover: hover) and (pointer: fine) {
-        button:hover { background: light-dark(#f5f5f5, #404040); }
-        button:active:not(:focus-visible) { transform: scale(0.97); }
-        @media (prefers-reduced-motion: no-preference) {
-          button:not(:focus-visible) {
-            transition: transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
-          }
-        }
-      }
-    `;
+    style.textContent = `${loadingCss}\n${selectionCss}`;
     const button = doc.createElement("button");
     button.type = "button";
-    button.textContent = "訳";
+    button.className = "trigger";
+    button.innerHTML =
+      '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m5 8 6 6m-7 0 6-6 2-3M2 5h12M7 2h1m14 20-5-11-5 11m2-4h6"/></svg>';
     button.setAttribute("aria-label", "選択した文章を日本語に翻訳");
     button.addEventListener("mousedown", (event) => event.preventDefault());
     button.addEventListener("click", () => {
@@ -669,7 +616,19 @@ export function createTranslationController({
       panel.setAttribute("aria-busy", "true");
       const close = doc.createElement("button");
       close.type = "button";
-      close.textContent = "閉じる";
+      close.className = "close";
+      close.setAttribute("aria-label", "閉じる");
+      close.innerHTML =
+        '<svg viewBox="0 0 20 20" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m5 5 10 10M15 5 5 15"/></svg>';
+      const header = doc.createElement("div");
+      header.className = "header";
+      const title = doc.createElement("span");
+      title.className = "title";
+      title.textContent = "翻訳";
+      const language = doc.createElement("span");
+      language.className = "language";
+      language.textContent = "日本語";
+      header.append(title, language, close);
       close.addEventListener("click", closeSelection);
       const output = doc.createElement("div");
       output.className = "text";
@@ -679,15 +638,17 @@ export function createTranslationController({
       const indicator = doc.createElement("span");
       indicator.className = "translation-indicator";
       indicator.setAttribute("aria-hidden", "true");
-      panel.append(close, indicator, output);
+      panel.append(header, indicator, output);
       button.replaceWith(panel);
-      close.focus();
+      positionSelection();
+      close.focus({ preventScroll: true });
       void translate(
         text,
         id,
         () => selectionSession === id,
         (text) => {
           output.textContent = text;
+          positionSelection();
         },
         "selection",
         "ja",
@@ -703,6 +664,7 @@ export function createTranslationController({
           if (selectionSession === id) {
             panel.setAttribute("aria-busy", "false");
             output.removeAttribute("aria-label");
+            positionSelection();
           }
         });
     });
@@ -711,7 +673,20 @@ export function createTranslationController({
     doc.documentElement.append(host);
     positionSelection();
   };
+  const onSelectionChange = () => onSelection();
+  const onMouseDown = (event: MouseEvent) => {
+    if (event.button !== 0 || (selectionHost && event.composedPath().includes(selectionHost)))
+      return;
+    selecting = true;
+    closeSelection();
+  };
+  const onMouseUp = (event: MouseEvent) => {
+    if (event.button !== 0 || !selecting) return;
+    selecting = false;
+    onSelection({ x: event.clientX, y: event.clientY });
+  };
   const reset = () => {
+    selecting = false;
     active = undefined;
     generation += 1;
     cancel(sessionId);
@@ -733,7 +708,8 @@ export function createTranslationController({
     }
   };
   const onViewportChange = () => {
-    closeSelection();
+    if (selectionSession) positionSelection();
+    else closeSelection();
     if (!active || !requests.size || positionFrame !== undefined) return;
     if (typeof win.requestAnimationFrame !== "function") updatePositions();
     else positionFrame = win.requestAnimationFrame(updatePositions);
@@ -744,7 +720,9 @@ export function createTranslationController({
     refreshFrame = undefined;
     refresh();
   };
-  doc.addEventListener("selectionchange", onSelection);
+  doc.addEventListener("selectionchange", onSelectionChange);
+  doc.addEventListener("mousedown", onMouseDown, true);
+  doc.addEventListener("mouseup", onMouseUp, true);
   doc.addEventListener("keydown", onKey);
   doc.addEventListener("visibilitychange", onVisibilityChange);
   win.addEventListener("scroll", onViewportChange, true);
@@ -787,7 +765,9 @@ export function createTranslationController({
     reset,
     dispose() {
       reset();
-      doc.removeEventListener("selectionchange", onSelection);
+      doc.removeEventListener("selectionchange", onSelectionChange);
+      doc.removeEventListener("mousedown", onMouseDown, true);
+      doc.removeEventListener("mouseup", onMouseUp, true);
       doc.removeEventListener("keydown", onKey);
       doc.removeEventListener("visibilitychange", onVisibilityChange);
       win.removeEventListener("scroll", onViewportChange, true);
