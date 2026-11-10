@@ -8,14 +8,13 @@ import {
 } from "./settings";
 
 afterEach(() => vi.restoreAllMocks());
-it.each([
-  {},
-  { translationModel: "2b" },
-  { translationModel: "invalid", translationBackend: "invalid" },
-])("preserves the default browser 2B for legacy or invalid settings (%j)", async (stored) => {
-  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
-  expect(await readTranslationSettings()).toEqual({ kind: "browser", model: "2b" });
-});
+it.each([{}, { translationModel: "invalid", translationBackend: "invalid" }])(
+  "defaults to browser 0.8B for legacy or invalid settings (%j)",
+  async (stored) => {
+    vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
+    expect(await readTranslationSettings()).toEqual({ kind: "browser", model: "0.8b" });
+  },
+);
 it("keeps a legacy 0.8B selection and saves each backend without overwriting the other model", async () => {
   vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({
     translationModel: "0.8b",
@@ -56,4 +55,11 @@ it("saves and reloads replacement mode", async () => {
   vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
   await saveTranslationMode("replace");
   expect(await readTranslationMode()).toBe("replace");
+});
+
+it("preserves an explicitly saved 2B model", async () => {
+  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({
+    translationModel: "2b",
+  }));
+  expect(await readTranslationSettings()).toEqual({ kind: "browser", model: "2b" });
 });

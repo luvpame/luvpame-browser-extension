@@ -9,7 +9,7 @@ import {
 export const TRANSLATION_MODEL_KEY = "translationModel";
 export const readTranslationModel = async (): Promise<TranslationModel> => {
   const stored = await browser.storage.local.get(TRANSLATION_MODEL_KEY);
-  return stored[TRANSLATION_MODEL_KEY] === "0.8b" ? "0.8b" : "2b";
+  return stored[TRANSLATION_MODEL_KEY] === "2b" ? "2b" : "0.8b";
 };
 export const saveTranslationModel = (model: TranslationModel): Promise<void> =>
   browser.storage.local.set({ [TRANSLATION_MODEL_KEY]: model });
@@ -30,7 +30,7 @@ export const readTranslationSettings = async (): Promise<TranslationProvider> =>
           ? stored[OLLAMA_MODEL_KEY]
           : DEFAULT_OLLAMA_MODEL,
       }
-    : { kind: "browser", model: stored[TRANSLATION_MODEL_KEY] === "0.8b" ? "0.8b" : "2b" };
+    : { kind: "browser", model: stored[TRANSLATION_MODEL_KEY] === "2b" ? "2b" : "0.8b" };
 };
 export const saveTranslationProvider = (provider: TranslationProvider): Promise<void> =>
   provider.kind === "browser"

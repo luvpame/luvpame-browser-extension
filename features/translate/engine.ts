@@ -12,6 +12,15 @@ import { scheduleTranslation, translationCache, translationCacheKey } from "./sc
 type LoadedModel = { runtime: Wllama; model: TranslationModel; device: TranslationDevice };
 
 let loadedModel: LoadedModel | undefined;
+type BrowserTranslation = { text: string; device: TranslationDevice };
+type InFlightTranslation = {
+  controller: AbortController;
+  subscribers: Set<TranslationOptions>;
+  promise: Promise<BrowserTranslation>;
+  progress?: string;
+  text?: string;
+};
+const inFlight = new Map<string, InFlightTranslation>();
 
 const modelUrl = (model: TranslationModel) =>
   `https://huggingface.co/pfnet/plamo-3-translate-${model}-GGUF/resolve/main/plamo-3-translate-${model}-Q4_K_M.gguf`;
@@ -162,21 +171,84 @@ export async function translate(
   model: TranslationModel,
   options: TranslationOptions,
 ): Promise<{ text: string; device: TranslationDevice }> {
+  options.signal.throwIfAborted();
   const key = translationCacheKey({ kind: "browser", model }, target, text);
-  return scheduleTranslation(
-    options,
-    async () => {
-      const cached = translationCache.get(key);
-      if (cached && (cached.device === "gpu" || cached.device === "cpu"))
-        return { text: cached.text, device: cached.device };
-      const result = await runTranslation(text, target, model, options);
-      options.signal.throwIfAborted();
-      translationCache.set(key, result);
-      return result;
-    },
-    {
-      group: `browser:${model}`,
-      capacity: () => (loadedModel?.model === model && loadedModel.device === "gpu" ? 2 : 1),
-    },
-  );
+  const cached = translationCache.get(key);
+  if (cached && (cached.device === "gpu" || cached.device === "cpu"))
+    return { text: cached.text, device: cached.device };
+
+  let entry = inFlight.get(key);
+  if (!entry) {
+    const controller = new AbortController();
+    const subscribers = new Set<TranslationOptions>();
+    const sharedOptions: TranslationOptions = {
+      signal: controller.signal,
+      priority: options.priority,
+      onProgress: (message) => {
+        shared.progress = message;
+        for (const subscriber of subscribers) subscriber.onProgress(message);
+      },
+      onText: (value) => {
+        shared.text = value;
+        for (const subscriber of subscribers) subscriber.onText?.(value);
+      },
+    };
+    const shared: InFlightTranslation = {
+      controller,
+      subscribers,
+      promise: Promise.resolve()
+        .then(() =>
+          scheduleTranslation(
+            sharedOptions,
+            async () => {
+              const result = await runTranslation(text, target, model, sharedOptions);
+              controller.signal.throwIfAborted();
+              translationCache.set(key, result);
+              return result;
+            },
+            {
+              group: `browser:${model}`,
+              capacity: () =>
+                loadedModel?.model === model && loadedModel.device === "gpu" ? 2 : 1,
+            },
+          ),
+        )
+        .finally(() => {
+          if (inFlight.get(key) === shared) inFlight.delete(key);
+        }),
+    };
+    entry = shared;
+    inFlight.set(key, entry);
+  }
+  const shared = entry;
+  const subscriber = { ...options };
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      shared.subscribers.delete(subscriber);
+      options.signal.removeEventListener("abort", onAbort);
+      if (!shared.subscribers.size) {
+        if (inFlight.get(key) === shared) inFlight.delete(key);
+        shared.controller.abort(options.signal.reason);
+      }
+      reject(options.signal.reason);
+    };
+    shared.subscribers.add(subscriber);
+    options.signal.addEventListener("abort", onAbort, { once: true });
+    const unsubscribe = () => {
+      shared.subscribers.delete(subscriber);
+      options.signal.removeEventListener("abort", onAbort);
+    };
+    shared.promise.then(
+      (result) => {
+        unsubscribe();
+        resolve(result);
+      },
+      (error: unknown) => {
+        unsubscribe();
+        reject(error);
+      },
+    );
+    if (shared.progress !== undefined) subscriber.onProgress(shared.progress);
+    if (shared.text !== undefined) subscriber.onText?.(shared.text);
+  });
 }

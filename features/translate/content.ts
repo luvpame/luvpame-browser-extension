@@ -122,36 +122,59 @@ export function createTranslationController({
     priority: TranslationPriority,
     target: TargetLanguage,
   ) => {
-    const parts: string[] = [];
-    for (const chunk of splitTranslationText(text)) {
-      if (!current()) return undefined;
-      const requestId = crypto.randomUUID();
-      requests.set(requestId, {
-        sessionId: id,
-        update: (value) => {
-          if (!current()) return;
-          if (value.kind === "text") output([...parts, value.text].join("\n"));
-        },
-      });
-      try {
-        const result = await send({
-          type: TRANSLATE,
-          text: chunk,
-          target,
-          sessionId: id,
-          requestId,
-          priority,
-        });
-        if (!current()) return undefined;
-        if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
-        if (!result.ok) throw new Error(result.error);
-        parts.push(result.text);
-        output(parts.join("\n"));
-      } finally {
-        requests.delete(requestId);
+    const chunks = splitTranslationText(text);
+    const parts = chunks.map(() => ({ text: "", done: false }));
+    let next = 0;
+    let failed = false;
+    const publish = () => {
+      const visible: string[] = [];
+      for (const part of parts) {
+        if (part.done || part.text) visible.push(part.text);
+        if (!part.done) break;
       }
-    }
-    return parts.join("\n");
+      output(visible.join("\n"));
+    };
+    const worker = async () => {
+      while (next < chunks.length && !failed && current()) {
+        const index = next++;
+        const part = parts[index]!;
+        const requestId = crypto.randomUUID();
+        requests.set(requestId, {
+          sessionId: id,
+          update: (value) => {
+            if (failed || !current()) return;
+            if (value.kind === "text") {
+              part.text = value.text;
+              publish();
+            }
+          },
+        });
+        try {
+          const result = await send({
+            type: TRANSLATE,
+            text: chunks[index],
+            target,
+            sessionId: id,
+            requestId,
+            priority,
+          });
+          if (failed || !current()) return;
+          if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
+          if (!result.ok) throw new Error(result.error);
+          part.text = result.text;
+          part.done = true;
+          publish();
+        } catch (error) {
+          failed = true;
+          throw error;
+        } finally {
+          requests.delete(requestId);
+        }
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    if (!current()) return undefined;
+    return parts.map((part) => part.text).join("\n");
   };
   const createOutput = (element: Element) => {
     const host = doc.createElement("div");

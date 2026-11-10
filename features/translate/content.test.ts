@@ -937,6 +937,88 @@ it("keeps completed chunks while streaming the current one and ignores old reque
   expect(output()).toEqual(["置換後"]);
 });
 
+describe.each(["below", "replace"] as const)("長文の並列翻訳 %s", (mode) => {
+  const source = "Hello world. ".repeat(350).trim();
+  const pending: {
+    sessionId: string;
+    requestId: string;
+    finish: (value: unknown) => void;
+  }[] = [];
+  const start = () => {
+    pending.length = 0;
+    document.body.innerHTML = `<p>${source}</p>`;
+    const controller = mount((message) => {
+      if (!isTranslationRequest(message)) return Promise.resolve(undefined);
+      return new Promise((finish) => pending.push({ ...message, finish }));
+    });
+    controller.toggle(mode);
+    return controller;
+  };
+  const displayed = () =>
+    mode === "below" ? output()[0] : document.querySelector("p")?.textContent;
+
+  it("2片ずつ送り、後続が先に完了しても先頭から連続する訳だけを表示する", async () => {
+    const controller = start();
+    expect(pending).toHaveLength(2);
+    const first = pending[0]!;
+    const second = pending[1]!;
+    controller.progress(second.sessionId, second.requestId, { kind: "text", text: "後半の途中" });
+    expect(displayed()).toBe(mode === "below" ? "" : source);
+    second.finish(success("2番目"));
+    await tick();
+    expect(pending).toHaveLength(3);
+    expect(displayed()).toBe(mode === "below" ? "" : source);
+    const third = pending[2]!;
+    controller.progress(third.sessionId, third.requestId, { kind: "text", text: "3番目の途中" });
+    controller.progress(first.sessionId, first.requestId, { kind: "text", text: "最初の途中" });
+    expect(displayed()).toBe("最初の途中");
+    first.finish(success("最初"));
+    await tick();
+    expect(pending).toHaveLength(4);
+    expect(displayed()).toBe("最初\n2番目\n3番目の途中");
+    controller.progress(first.sessionId, first.requestId, { kind: "text", text: "古い進捗" });
+    expect(displayed()).toBe("最初\n2番目\n3番目の途中");
+    third.finish(success("3番目"));
+    pending[3]!.finish(success("最後"));
+    await tick();
+    expect(displayed()).toBe("最初\n2番目\n3番目\n最後");
+    expect(pending).toHaveLength(4);
+  });
+
+  it("停止後の両片の進捗と完了を無視し、次の片を送信しない", async () => {
+    const controller = start();
+    expect(pending).toHaveLength(2);
+    controller.toggle(mode);
+    for (const request of pending) {
+      controller.progress(request.sessionId, request.requestId, {
+        kind: "text",
+        text: "古い途中訳",
+      });
+      request.finish(success("古い訳"));
+    }
+    await tick();
+    expect(pending).toHaveLength(2);
+    expect(output()).toEqual([]);
+    expect(document.querySelector("p")?.textContent).toBe(source);
+  });
+
+  it("片方の失敗後に残った進捗や完了がエラーと原文を上書きしない", async () => {
+    const controller = start();
+    const first = pending[0]!;
+    const second = pending[1]!;
+    controller.progress(first.sessionId, first.requestId, { kind: "text", text: "途中訳" });
+    second.finish({ ok: false, error: "翻訳エラー" });
+    await tick();
+    expect(output()).toEqual(["翻訳エラー"]);
+    controller.progress(first.sessionId, first.requestId, { kind: "text", text: "エラー後の進捗" });
+    first.finish(success("エラー後の完了"));
+    await tick();
+    expect(output()).toEqual(["翻訳エラー"]);
+    expect(document.querySelector("p")?.textContent).toBe(source);
+    expect(pending).toHaveLength(2);
+  });
+});
+
 describe.each(["below", "replace"] as const)("表示方式 %s と翻訳先", (mode) => {
   it.each(["ja", "ja-easy"] as const)(
     "%s を指定方式で表示し同じ組合せで解除する",

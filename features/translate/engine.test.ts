@@ -460,3 +460,117 @@ it("cancels one GPU chunk without interrupting the other chunk or unloading its 
   await next;
   expect(mocks.load).toHaveBeenCalledTimes(1);
 });
+
+it("returns cached results while inference is busy and still rejects aborted callers", async () => {
+  const { translate } = await import("./engine");
+  await translate("cached", "ja", "2b", options());
+  const started = deferred();
+  const finish = deferred();
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    started.resolve();
+    await finish.promise;
+    params.onData(chunk("busy result"));
+  });
+  const busy = translate("busy", "ja", "0.8b", options());
+  await started.promise;
+  const opts = options();
+  expect((await translate("cached", "ja", "2b", opts)).text).toBe("翻訳結果");
+  expect(opts.onProgress).not.toHaveBeenCalled();
+  const controller = new AbortController();
+  controller.abort();
+  await expect(
+    translate("cached", "ja", "2b", { ...options(), signal: controller.signal }),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  finish.resolve();
+  await busy;
+});
+
+it("shares inference and replays progress and partial text to a late subscriber", async () => {
+  const { translate } = await import("./engine");
+  const started = deferred();
+  const finish = deferred();
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    params.onData(chunk("最初", null));
+    started.resolve();
+    await finish.promise;
+    params.onData(chunk("と最後"));
+  });
+  const firstOptions = { ...options(), onText: vi.fn() };
+  const first = translate("shared", "ja", "2b", firstOptions);
+  await started.promise;
+  const secondOptions = { ...options(), onText: vi.fn() };
+  const second = translate("shared", "ja", "2b", secondOptions);
+  expect(secondOptions.onProgress).toHaveBeenCalledWith("日本語に訳しています…");
+  expect(secondOptions.onText).toHaveBeenCalledWith("最初");
+  finish.resolve();
+  expect(await first).toEqual(await second);
+  expect(firstOptions.onText.mock.calls).toEqual(secondOptions.onText.mock.calls);
+  expect(mocks.complete).toHaveBeenCalledOnce();
+  expect(mocks.load).toHaveBeenCalledOnce();
+});
+
+it("keeps a shared inference running when one subscriber cancels", async () => {
+  const { translate } = await import("./engine");
+  const started = deferred();
+  const finish = deferred();
+  let inferenceSignal: AbortSignal | undefined;
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    inferenceSignal = params.abortSignal;
+    started.resolve();
+    await finish.promise;
+    params.onData(chunk("完了"));
+  });
+  const controller = new AbortController();
+  const cancelledOptions = { ...options(), signal: controller.signal, onText: vi.fn() };
+  const cancelled = translate("shared", "ja", "2b", cancelledOptions);
+  const rejected = expect(cancelled).rejects.toMatchObject({ name: "AbortError" });
+  const kept = translate("shared", "ja", "2b", options());
+  await started.promise;
+  controller.abort();
+  await rejected;
+  expect(inferenceSignal?.aborted).toBe(false);
+  finish.resolve();
+  expect((await kept).text).toBe("完了");
+  expect(cancelledOptions.onText).not.toHaveBeenCalled();
+  expect(mocks.complete).toHaveBeenCalledOnce();
+});
+
+it("aborts inference after the last subscriber cancels and shares an immediate retry", async () => {
+  const { translate } = await import("./engine");
+  const started = deferred();
+  const finish = deferred();
+  const retried = deferred();
+  const finishRetry = deferred();
+  let inferenceSignal: AbortSignal | undefined;
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    inferenceSignal = params.abortSignal;
+    started.resolve();
+    await finish.promise;
+    params.onData(chunk("キャンセル済み"));
+  });
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    retried.resolve();
+    await finishRetry.promise;
+    params.onData(chunk("再試行"));
+  });
+  const firstController = new AbortController();
+  const secondController = new AbortController();
+  const first = translate("retry", "ja", "2b", { ...options(), signal: firstController.signal });
+  const second = translate("retry", "ja", "2b", { ...options(), signal: secondController.signal });
+  const firstRejected = expect(first).rejects.toMatchObject({ name: "AbortError" });
+  const secondRejected = expect(second).rejects.toMatchObject({ name: "AbortError" });
+  await started.promise;
+  firstController.abort();
+  expect(inferenceSignal?.aborted).toBe(false);
+  secondController.abort();
+  expect(inferenceSignal?.aborted).toBe(true);
+  const retry = translate("retry", "ja", "2b", options());
+  await Promise.all([firstRejected, secondRejected]);
+  finish.resolve();
+  await retried.promise;
+  const duplicateRetry = translate("retry", "ja", "2b", options());
+  finishRetry.resolve();
+  expect((await retry).text).toBe("再試行");
+  expect(await duplicateRetry).toEqual(await retry);
+  expect(mocks.complete).toHaveBeenCalledTimes(2);
+});

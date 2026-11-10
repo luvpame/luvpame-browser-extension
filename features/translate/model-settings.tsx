@@ -18,7 +18,7 @@ import {
 
 export function TranslationModelSettings() {
   const [mode, setMode] = useState<TranslationMode>("below");
-  const [model, setModel] = useState<TranslationModel>("2b");
+  const [model, setModel] = useState<TranslationModel>("0.8b");
   const [backend, setBackend] = useState<TranslationProvider["kind"]>("browser");
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
   const [savedOllamaModel, setSavedOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
