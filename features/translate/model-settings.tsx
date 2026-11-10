@@ -3,13 +3,21 @@ import { errorText } from "../../lib/copy-protocol";
 import {
   DEFAULT_OLLAMA_MODEL,
   readOllamaModel,
+  readTranslationMode,
+  saveTranslationMode,
   readTranslationModel,
   readTranslationSettings,
   saveTranslationProvider,
 } from "./settings";
-import { isOllamaModel, type TranslationModel, type TranslationProvider } from "./shared";
+import {
+  isOllamaModel,
+  type TranslationMode,
+  type TranslationModel,
+  type TranslationProvider,
+} from "./shared";
 
 export function TranslationModelSettings() {
+  const [mode, setMode] = useState<TranslationMode>("below");
   const [model, setModel] = useState<TranslationModel>("2b");
   const [backend, setBackend] = useState<TranslationProvider["kind"]>("browser");
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
@@ -17,8 +25,14 @@ export function TranslationModelSettings() {
   const [ready, setReady] = useState(false);
   const [status, setStatus] = useState("");
   useEffect(() => {
-    void Promise.all([readTranslationSettings(), readTranslationModel(), readOllamaModel()])
-      .then(([provider, model, ollama]) => {
+    void Promise.all([
+      readTranslationSettings(),
+      readTranslationModel(),
+      readOllamaModel(),
+      readTranslationMode(),
+    ])
+      .then(([provider, model, ollama, mode]) => {
+        setMode(mode);
         setBackend(provider.kind);
         setModel(model);
         setOllamaModel(ollama);
@@ -46,7 +60,29 @@ export function TranslationModelSettings() {
   };
   return (
     <fieldset className="model-settings">
-      <legend>翻訳モデル</legend>
+      <legend>翻訳設定</legend>
+      <label htmlFor="translation-mode">ページ翻訳の表示方式</label>
+      <select
+        id="translation-mode"
+        value={mode}
+        disabled={!ready}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (next !== "below" && next !== "replace") return;
+          setReady(false);
+          void saveTranslationMode(next)
+            .then(() => {
+              setMode(next);
+              setStatus("表示方式を保存しました。次の翻訳から使用します。");
+            })
+            .catch((error) => setStatus(errorText(error)))
+            .finally(() => setReady(true));
+        }}
+      >
+        <option value="below">原文＋翻訳の二段表示</option>
+        <option value="replace">原文を翻訳に置き換え</option>
+      </select>
+      <p className="hint">通常の日本語とやさしい日本語に共通で、次の翻訳から使用します。</p>
       <p className="hint section-description">モデルを選ぶと保存され、次の翻訳から使われます。</p>
       <label htmlFor="translation-backend">翻訳の実行方法</label>
       <select
@@ -64,7 +100,7 @@ export function TranslationModelSettings() {
       </select>
       {backend === "browser" ? (
         <>
-          <label htmlFor="translation-model">3つの翻訳機能で使うモデル</label>
+          <label htmlFor="translation-model">翻訳に使うモデル</label>
           <select
             id="translation-model"
             value={model}
@@ -109,7 +145,7 @@ export function TranslationModelSettings() {
         </>
       )}
       <p className="hint">
-        原文下の翻訳はOption+A、原文の置き換えはOption+Shift+Aで開始・解除できます。やさしい日本語はOption+Bで開きます。他の拡張と競合する場合は
+        日本語訳はOption+A、やさしい日本語訳はOption+Shift+Aで開始・解除できます。他の拡張と競合する場合は
         chrome://extensions/shortcuts で変更してください。
       </p>
       <p role="status">{status}</p>

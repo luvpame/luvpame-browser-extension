@@ -24,7 +24,6 @@ const api = vi.hoisted(() => {
       onClicked: { addListener: vi.fn() },
     },
     offscreen: { hasDocument: vi.fn() },
-    sidePanel: { open: vi.fn() },
   };
 });
 vi.mock("wxt/browser", () => ({ browser: api }));
@@ -34,11 +33,9 @@ import {
   TRANSLATE,
   CANCEL_TRANSLATION,
   OFFSCREEN_TRANSLATE,
-  OFFSCREEN_CANCEL,
   isTranslationRequest,
   TRANSLATION_READY,
   PAGE_TRANSLATION,
-  PAGE_REPLACEMENT_TRANSLATION,
 } from "./shared";
 
 const request = {
@@ -51,7 +48,7 @@ const request = {
 };
 const sender = { id: "test-extension", tab: { id: 7 }, frameId: 0, url: "https://example.com" };
 const menus = new Map<string | number, Browser.contextMenus.CreateProperties>();
-const menuIds = ["luvpame:page-translation", "luvpame:easy-article"];
+const menuIds = ["luvpame:page-translation", "luvpame:easy-page-translation"];
 
 beforeEach(() => {
   vi.resetAllMocks();
@@ -121,14 +118,14 @@ it("creates static menus synchronously before settings resolve", async () => {
   expect([...menus.values()]).toEqual([
     {
       id: menuIds[0],
-      title: "原文下の日本語訳を開始／解除（Option+A）",
+      title: "日本語訳を開始／解除（Option+A）",
       contexts: ["all"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
       enabled: true,
     },
     {
       id: menuIds[1],
-      title: "本文をやさしい日本語で読む（Option+B）",
+      title: "やさしい日本語訳を開始／解除（Option+Shift+A）",
       contexts: ["all"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
       enabled: true,
@@ -251,37 +248,19 @@ it("uses the persisted model and scopes content requests to the sender tab", asy
   );
 });
 
-it.each([undefined, { id: 7 }])(
-  "accepts sidepanel translation and cancellation with tab metadata %j",
-  async (tab) => {
-    registerTranslationBackground();
-    const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
-    const panelSender = {
-      id: "test-extension",
-      url: api.runtime.getURL("/sidepanel.html"),
-      tab,
-      frameId: 0,
-    };
-    const respond = vi.fn();
-    expect(listener(request, panelSender, respond)).toBe(true);
-    await vi.waitFor(() =>
-      expect(respond).toHaveBeenCalledWith(expect.objectContaining({ ok: true })),
-    );
-    expect(api.runtime.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ type: OFFSCREEN_TRANSLATE, sessionId: "panel:session-1" }),
-    );
-    api.offscreen.hasDocument.mockResolvedValue(true);
-    const cancelled = vi.fn();
-    listener({ type: CANCEL_TRANSLATION, sessionId: request.sessionId }, panelSender, cancelled);
-    expect(cancelled).toHaveBeenCalledWith({ ok: true });
-    await vi.waitFor(() =>
-      expect(api.runtime.sendMessage).toHaveBeenCalledWith({
-        type: OFFSCREEN_CANCEL,
-        sessionId: "panel:session-1",
-      }),
-    );
-  },
-);
+it.each([undefined, { id: 7 }])("rejects removed sidepanel senders (%j)", (tab) => {
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  const respond = vi.fn();
+  expect(
+    listener(
+      request,
+      { id: "test-extension", url: api.runtime.getURL("/sidepanel.html"), tab, frameId: 0 },
+      respond,
+    ),
+  ).toBeUndefined();
+  expect(respond).not.toHaveBeenCalled();
+});
 
 it("never starts inference for a disabled feature or forged sender", async () => {
   registerTranslationBackground();
@@ -324,75 +303,46 @@ it("rejects unrelated offscreen replies instead of displaying them as a translat
   expect(result).toMatchObject({ ok: false });
 });
 
-it("offers both context menus and opens the native sidepanel directly from its menu action", async () => {
-  api.sidePanel.open.mockResolvedValue(undefined);
-  api.tabs.sendMessage.mockResolvedValue({ ok: true, active: true });
+it.each([
+  ["luvpame:page-translation", "ja"],
+  ["luvpame:easy-page-translation", "ja-easy"],
+])("routes menu %s to page translation", async (menuItemId, target) => {
   registerTranslationBackground();
-  await vi.waitFor(() => expect(api.contextMenus.create).toHaveBeenCalledTimes(2));
-  expect(api.contextMenus.create.mock.calls.map(([menu]) => menu.id)).toEqual([
-    "luvpame:page-translation",
-    "luvpame:easy-article",
-  ]);
-  const click = api.contextMenus.onClicked.addListener.mock.calls[0]?.[0];
-  click({ menuItemId: "luvpame:easy-article" }, { id: 7 });
-  expect(api.sidePanel.open).toHaveBeenCalledWith({ tabId: 7 });
-  click({ menuItemId: "luvpame:page-translation" }, { id: 7 });
+  api.contextMenus.onClicked.addListener.mock.calls[0]?.[0]({ menuItemId }, { id: 7 });
   await vi.waitFor(() =>
-    expect(api.tabs.sendMessage).toHaveBeenCalledWith(
+    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(
       7,
-      {
-        type: "luvpame:page-translation",
-      },
+      { type: PAGE_TRANSLATION, target },
       { frameId: 0 },
     ),
   );
 });
-
 it.each([
-  ["toggle-page-translation", PAGE_TRANSLATION],
-  ["toggle-page-replacement-translation", PAGE_REPLACEMENT_TRANSLATION],
-])("toggles the active page with %s without reinjecting", async (name, type) => {
+  ["toggle-page-translation", "ja"],
+  ["toggle-easy-page-translation", "ja-easy"],
+])("toggles the active page with %s without reinjecting", async (name, target) => {
   api.tabs.query.mockResolvedValue([{ id: 7 }]);
-  api.tabs.sendMessage.mockResolvedValue({ ok: true, active: true });
   registerTranslationBackground();
-  const command = api.commands.onCommand.addListener.mock.calls[0]?.[0];
-  command(name);
+  api.commands.onCommand.addListener.mock.calls[0]?.[0](name);
   await vi.waitFor(() =>
-    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(7, { type }, { frameId: 0 }),
+    expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(
+      7,
+      { type: PAGE_TRANSLATION, target },
+      { frameId: 0 },
+    ),
   );
   expect(api.scripting.executeScript).not.toHaveBeenCalled();
-  expect(api.notifications.create).not.toHaveBeenCalled();
 });
-
-it("uses the command tab for replacement translation", async () => {
+it("uses the command tab for easy translation", async () => {
   registerTranslationBackground();
-  api.commands.onCommand.addListener.mock.calls[0]?.[0]("toggle-page-replacement-translation", {
-    id: 8,
-  });
+  api.commands.onCommand.addListener.mock.calls[0]?.[0]("toggle-easy-page-translation", { id: 8 });
   await vi.waitFor(() =>
     expect(api.tabs.sendMessage).toHaveBeenLastCalledWith(
       8,
-      { type: PAGE_REPLACEMENT_TRANSLATION },
+      { type: PAGE_TRANSLATION, target: "ja-easy" },
       { frameId: 0 },
     ),
   );
-  expect(api.tabs.query).not.toHaveBeenCalled();
-});
-
-it("opens easy Japanese directly from the command before reading settings", () => {
-  api.sidePanel.open.mockResolvedValue(undefined);
-  api.storage.local.get.mockImplementation(() => new Promise(() => {}));
-  registerTranslationBackground();
-  api.commands.onCommand.addListener.mock.calls[0]?.[0]("open-easy-article", { id: 7 });
-  expect(api.sidePanel.open).toHaveBeenCalledExactlyOnceWith({ tabId: 7 });
-  expect(api.storage.local.get).not.toHaveBeenCalled();
-  expect(api.tabs.query).not.toHaveBeenCalled();
-});
-
-it("does not asynchronously open a sidepanel without the command tab", () => {
-  registerTranslationBackground();
-  api.commands.onCommand.addListener.mock.calls[0]?.[0]("open-easy-article");
-  expect(api.sidePanel.open).not.toHaveBeenCalled();
   expect(api.tabs.query).not.toHaveBeenCalled();
 });
 

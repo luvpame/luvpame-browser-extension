@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vite-plus/test";
 import { browser } from "wxt/browser";
-import { readTranslationSettings, saveTranslationProvider } from "./settings";
+import {
+  readTranslationSettings,
+  saveTranslationProvider,
+  readTranslationMode,
+  saveTranslationMode,
+} from "./settings";
 
 afterEach(() => vi.restoreAllMocks());
 it.each([
@@ -34,4 +39,21 @@ it("reads an explicitly chosen Ollama model", async () => {
     translationOllamaModel: "local-plamo:latest",
   }));
   expect(await readTranslationSettings()).toEqual({ kind: "ollama", model: "local-plamo:latest" });
+});
+
+it.each([undefined, null, "invalid", "below"])(
+  "defaults invalid or missing mode %j to below",
+  async (translationMode) => {
+    vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({ translationMode }));
+    expect(await readTranslationMode()).toBe("below");
+  },
+);
+it("saves and reloads replacement mode", async () => {
+  let stored = {};
+  vi.spyOn(browser.storage.local, "set").mockImplementation(async (value) => {
+    stored = value;
+  });
+  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
+  await saveTranslationMode("replace");
+  expect(await readTranslationMode()).toBe("replace");
 });

@@ -1,5 +1,10 @@
 import { browser } from "wxt/browser";
-import { isOllamaModel, type TranslationModel, type TranslationProvider } from "./shared";
+import {
+  isOllamaModel,
+  type TranslationMode,
+  type TranslationModel,
+  type TranslationProvider,
+} from "./shared";
 
 export const TRANSLATION_MODEL_KEY = "translationModel";
 export const readTranslationModel = async (): Promise<TranslationModel> => {
@@ -42,3 +47,11 @@ export const readOllamaModel = async (): Promise<string> => {
   const stored = await browser.storage.local.get(OLLAMA_MODEL_KEY);
   return isOllamaModel(stored[OLLAMA_MODEL_KEY]) ? stored[OLLAMA_MODEL_KEY] : DEFAULT_OLLAMA_MODEL;
 };
+
+export const TRANSLATION_MODE_KEY = "translationMode";
+export const readTranslationMode = async (): Promise<TranslationMode> => {
+  const stored = await browser.storage.local.get(TRANSLATION_MODE_KEY);
+  return stored[TRANSLATION_MODE_KEY] === "replace" ? "replace" : "below";
+};
+export const saveTranslationMode = (mode: TranslationMode): Promise<void> =>
+  browser.storage.local.set({ [TRANSLATION_MODE_KEY]: mode });

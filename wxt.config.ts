@@ -8,7 +8,6 @@ export default defineConfig({
     name: "Luvpame Browser Extension",
     description: "GitHub・Notionの編集補助、Markdownコピーを一つに。",
     minimum_chrome_version: "137",
-    side_panel: { default_path: "sidepanel.html" },
     content_security_policy: {
       extension_pages:
         "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self';",
@@ -23,7 +22,6 @@ export default defineConfig({
       "notifications",
       "offscreen",
       "contextMenus",
-      "sidePanel",
     ],
     host_permissions: [
       "https://github.com/*",
@@ -35,15 +33,11 @@ export default defineConfig({
     commands: {
       "toggle-page-translation": {
         suggested_key: { default: "Alt+A", mac: "Alt+A" },
-        description: "原文下の日本語訳を開始／解除",
+        description: "日本語訳を開始／解除",
       },
-      "toggle-page-replacement-translation": {
+      "toggle-easy-page-translation": {
         suggested_key: { default: "Alt+Shift+A", mac: "Alt+Shift+A" },
-        description: "原文を日本語訳に置き換え／解除",
-      },
-      "open-easy-article": {
-        suggested_key: { default: "Alt+B", mac: "Alt+B" },
-        description: "本文をやさしい日本語で読む",
+        description: "やさしい日本語訳を開始／解除",
       },
       "copy-markdown-link": {
         suggested_key: { default: "Ctrl+Shift+Y", mac: "Command+Shift+Y" },

@@ -1,11 +1,6 @@
 import { browser } from "wxt/browser";
 import { errorText, isRecord } from "../../lib/copy-protocol";
-import {
-  ARTICLE_REQUEST,
-  PAGE_TRANSLATION,
-  PAGE_REPLACEMENT_TRANSLATION,
-  TRANSLATION_READY,
-} from "./shared";
+import { PAGE_TRANSLATION, TRANSLATION_READY, type TargetLanguage } from "./shared";
 
 async function hasTranslationReceiver(tabId: number): Promise<boolean> {
   try {
@@ -24,7 +19,7 @@ async function hasTranslationReceiver(tabId: number): Promise<boolean> {
 
 export async function sendPageTranslationMessage(
   tabId: number,
-  type: typeof PAGE_TRANSLATION | typeof PAGE_REPLACEMENT_TRANSLATION | typeof ARTICLE_REQUEST,
+  target: TargetLanguage,
 ): Promise<unknown> {
   if (!(await hasTranslationReceiver(tabId))) {
     await browser.scripting.executeScript({
@@ -34,5 +29,5 @@ export async function sendPageTranslationMessage(
     if (!(await hasTranslationReceiver(tabId)))
       throw new Error("翻訳機能への接続を確認できませんでした。");
   }
-  return browser.tabs.sendMessage(tabId, { type }, { frameId: 0 });
+  return browser.tabs.sendMessage(tabId, { type: PAGE_TRANSLATION, target }, { frameId: 0 });
 }

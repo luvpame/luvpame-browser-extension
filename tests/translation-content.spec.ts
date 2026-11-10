@@ -2,18 +2,14 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { browser } from "wxt/browser";
 import { ContentScriptContext } from "wxt/utils/content-script-context";
 import content from "../entrypoints/translate.content";
-import { extractArticle } from "../features/translate/content";
 import {
-  ARTICLE_REQUEST,
   PAGE_TRANSLATION,
-  PAGE_REPLACEMENT_TRANSLATION,
   TRANSLATION_PROGRESS,
   TRANSLATION_READY,
 } from "../features/translate/shared";
 
 const controller = vi.hoisted(() => ({
   setEnabled: vi.fn(),
-  extractArticle: vi.fn(),
   toggle: vi.fn(() => ({ ok: true, active: true })),
   progress: vi.fn(),
   reset: vi.fn(),
@@ -21,18 +17,11 @@ const controller = vi.hoisted(() => ({
 }));
 vi.mock("../features/translate/content", () => ({
   createTranslationController: () => controller,
-  extractArticle: controller.extractArticle,
 }));
 
 let ctx: ContentScriptContext;
 let listener: Parameters<typeof browser.runtime.onMessage.addListener>[0];
 let settingsChanged: Parameters<typeof browser.storage.onChanged.addListener>[0];
-const article = {
-  ok: true,
-  url: "https://example.com/article",
-  title: "Example",
-  paragraphs: ["An article paragraph."],
-} satisfies Awaited<ReturnType<typeof extractArticle>>;
 const sender = { id: browser.runtime.id };
 
 beforeEach(() => {
@@ -40,7 +29,6 @@ beforeEach(() => {
   vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({
     translationEnabled: true,
   }));
-  vi.mocked(extractArticle).mockResolvedValue(article);
   ctx = new ContentScriptContext("translate", { noScriptStartedPostMessage: true });
 });
 
@@ -67,82 +55,51 @@ it("confirms the receiver synchronously while settings remain pending", () => {
   expect(listener({ type: TRANSLATION_READY }, sender, respond)).toBeUndefined();
   expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true });
   expect(controller.toggle).not.toHaveBeenCalled();
-  expect(extractArticle).not.toHaveBeenCalled();
 });
 
-it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
-  "waits for initial settings before responding to %s",
-  async (type) => {
-    const initialSettings = Promise.withResolvers<{ translationEnabled: boolean }>();
-    vi.spyOn(browser.storage.local, "get").mockImplementation(() => initialSettings.promise);
-    startContentScript();
-    const respond = vi.fn();
-    expect(listener({ type }, sender, respond)).toBe(true);
-    await Promise.resolve();
-    expect(respond).not.toHaveBeenCalled();
-    expect(controller.toggle).not.toHaveBeenCalled();
-    expect(extractArticle).not.toHaveBeenCalled();
+it.each(["ja", "ja-easy"])("waits for initial settings before responding to %s", async (target) => {
+  const initialSettings = Promise.withResolvers<{ translationEnabled: boolean }>();
+  vi.spyOn(browser.storage.local, "get").mockImplementation(() => initialSettings.promise);
+  startContentScript();
+  const respond = vi.fn();
+  expect(listener({ type: PAGE_TRANSLATION, target }, sender, respond)).toBe(true);
+  await Promise.resolve();
+  expect(respond).not.toHaveBeenCalled();
+  expect(controller.toggle).not.toHaveBeenCalled();
 
-    initialSettings.resolve({ translationEnabled: true });
-    await vi.waitFor(() =>
-      expect(respond).toHaveBeenCalledExactlyOnceWith(
-        type === ARTICLE_REQUEST ? article : { ok: true, active: true },
-      ),
-    );
-    expect(controller.setEnabled).toHaveBeenCalledExactlyOnceWith(true);
-  },
-);
+  initialSettings.resolve({ translationEnabled: true });
+  await vi.waitFor(() =>
+    expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true, active: true }),
+  );
+  expect(controller.setEnabled).toHaveBeenCalledExactlyOnceWith(true);
+});
 
-it.each(["stored", "changed"])(
-  "respects disabled translation from %s settings during startup",
-  async (source) => {
-    const initialSettings = Promise.withResolvers<{ translationEnabled: boolean }>();
-    vi.spyOn(browser.storage.local, "get").mockImplementation(() => initialSettings.promise);
-    startContentScript();
-    const respond = vi.fn();
-    expect(listener({ type: ARTICLE_REQUEST }, sender, respond)).toBe(true);
-    if (source === "changed") settingsChanged({ translationEnabled: { newValue: false } }, "local");
-    expect(respond).not.toHaveBeenCalled();
+it.each(["ja", "ja-easy"])("reports initial settings failures when handling %s", async (target) => {
+  const initialSettings = Promise.withResolvers<never>();
+  vi.spyOn(browser.storage.local, "get").mockImplementation(() => initialSettings.promise);
+  startContentScript();
+  const respond = vi.fn();
+  expect(listener({ type: PAGE_TRANSLATION, target }, sender, respond)).toBe(true);
+  initialSettings.reject(new Error("Storage unavailable."));
 
-    initialSettings.resolve({ translationEnabled: source === "changed" });
-    await vi.waitFor(() =>
-      expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: false, error: "翻訳はOFFです。" }),
-    );
-    expect(controller.setEnabled).toHaveBeenCalledExactlyOnceWith(false);
-    expect(extractArticle).not.toHaveBeenCalled();
-  },
-);
+  await vi.waitFor(() =>
+    expect(respond).toHaveBeenCalledExactlyOnceWith({
+      ok: false,
+      error: "Storage unavailable.",
+    }),
+  );
+  expect(controller.setEnabled).not.toHaveBeenCalled();
+  expect(controller.toggle).not.toHaveBeenCalled();
+});
 
-it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
-  "reports initial settings failures when handling %s",
-  async (type) => {
-    const initialSettings = Promise.withResolvers<never>();
-    vi.spyOn(browser.storage.local, "get").mockImplementation(() => initialSettings.promise);
-    startContentScript();
-    const respond = vi.fn();
-    expect(listener({ type }, sender, respond)).toBe(true);
-    initialSettings.reject(new Error("Storage unavailable."));
-
-    await vi.waitFor(() =>
-      expect(respond).toHaveBeenCalledExactlyOnceWith({
-        ok: false,
-        error: "Storage unavailable.",
-      }),
-    );
-    expect(controller.setEnabled).not.toHaveBeenCalled();
-    expect(controller.toggle).not.toHaveBeenCalled();
-    expect(extractArticle).not.toHaveBeenCalled();
-  },
-);
-
-it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
+it.each(["ja", "ja-easy"])(
   "ignores late settings after invalidation while handling %s",
-  async (type) => {
+  async (target) => {
     const initialSettings = Promise.withResolvers<{ translationEnabled: boolean }>();
     vi.spyOn(browser.storage.local, "get").mockImplementation(() => initialSettings.promise);
     startContentScript();
     const respond = vi.fn();
-    expect(listener({ type }, sender, respond)).toBe(true);
+    expect(listener({ type: PAGE_TRANSLATION, target }, sender, respond)).toBe(true);
     ctx.notifyInvalidated();
     initialSettings.resolve({ translationEnabled: true });
     await initialSettings.promise;
@@ -151,7 +108,6 @@ it.each([PAGE_TRANSLATION, PAGE_REPLACEMENT_TRANSLATION, ARTICLE_REQUEST])(
     expect(respond).not.toHaveBeenCalled();
     expect(controller.setEnabled).not.toHaveBeenCalled();
     expect(controller.toggle).not.toHaveBeenCalled();
-    expect(extractArticle).not.toHaveBeenCalled();
   },
 );
 
@@ -159,66 +115,68 @@ it("replies to page translation through the callback without returning a Promise
   startContentScript();
   await Promise.resolve();
   const respond = vi.fn();
-  expect(listener({ type: PAGE_TRANSLATION }, sender, respond)).toBe(true);
+  expect(listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond)).toBe(true);
   await vi.waitFor(() =>
     expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true, active: true }),
   );
-  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith();
+  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith("below", "ja");
   expect(controller.setEnabled).toHaveBeenCalledWith(true);
 });
 
-it("routes replacement translation to the replacement mode", async () => {
+it.each(["below", "replace"])("dispatches both targets with mode %s", async (mode) => {
+  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({
+    translationEnabled: true,
+    translationMode: mode,
+  }));
+  startContentScript();
+  for (const target of ["ja", "ja-easy"]) {
+    const respond = vi.fn();
+    expect(listener({ type: PAGE_TRANSLATION, target }, sender, respond)).toBe(true);
+    await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+    expect(controller.toggle).toHaveBeenLastCalledWith(mode, target);
+  }
+});
+it("reads the display setting again for every operation", async () => {
   startContentScript();
   const respond = vi.fn();
-  expect(listener({ type: PAGE_REPLACEMENT_TRANSLATION }, sender, respond)).toBe(true);
+  listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond);
+  await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({
+    translationMode: "replace",
+  }));
+  listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond);
+  await vi.waitFor(() => expect(controller.toggle).toHaveBeenLastCalledWith("replace", "ja"));
+});
+it("reports display-setting failures and ignores their completion after invalidation", async () => {
+  startContentScript();
+  await vi.waitFor(() => expect(controller.setEnabled).toHaveBeenCalled());
+  vi.mocked(browser.storage.local.get).mockRejectedValueOnce(new Error("Mode unavailable"));
+  const respond = vi.fn();
+  listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond);
   await vi.waitFor(() =>
-    expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true, active: true }),
+    expect(respond).toHaveBeenCalledWith({ ok: false, error: "Mode unavailable" }),
   );
-  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith("replace");
-  expect(extractArticle).not.toHaveBeenCalled();
-});
-
-it("keeps the article response channel open until extraction finishes", async () => {
-  startContentScript();
-  const respond = vi.fn();
-  expect(listener({ type: ARTICLE_REQUEST }, sender, respond)).toBe(true);
-  expect(respond).not.toHaveBeenCalled();
-  await vi.waitFor(() => expect(respond).toHaveBeenCalledExactlyOnceWith(article));
-});
-
-it("replies without extracting when article translation is disabled", async () => {
-  startContentScript();
+  const pending = Promise.withResolvers<Record<string, unknown>>();
+  vi.mocked(browser.storage.local.get).mockImplementationOnce(() => pending.promise);
+  respond.mockClear();
+  listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond);
   await Promise.resolve();
-  settingsChanged({ translationEnabled: { newValue: false } }, "local");
-  const respond = vi.fn();
-  expect(listener({ type: ARTICLE_REQUEST }, sender, respond)).toBe(true);
-  await vi.waitFor(() =>
-    expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: false, error: "翻訳はOFFです。" }),
-  );
-  expect(extractArticle).not.toHaveBeenCalled();
-});
-
-it.each([
-  [new Error("Extraction failed."), "Extraction failed."],
-  ["unrecognized failure", "本文を取得できませんでした。"],
-])("reports article extraction failures through the callback", async (error, message) => {
-  startContentScript();
-  vi.mocked(extractArticle).mockRejectedValue(error);
-  const respond = vi.fn();
-  expect(listener({ type: ARTICLE_REQUEST }, sender, respond)).toBe(true);
-  await vi.waitFor(() =>
-    expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: false, error: message }),
-  );
+  ctx.notifyInvalidated();
+  pending.resolve({ translationMode: "replace" });
+  await pending.promise;
+  await Promise.resolve();
+  expect(respond).not.toHaveBeenCalled();
+  expect(controller.toggle).not.toHaveBeenCalled();
 });
 
 it("ignores foreign senders, content senders and malformed messages", () => {
   startContentScript();
   const respond = vi.fn();
   for (const { message, source } of [
-    { message: { type: PAGE_TRANSLATION }, source: { id: "other-extension" } },
+    { message: { type: PAGE_TRANSLATION, target: "ja" }, source: { id: "other-extension" } },
     { message: { type: TRANSLATION_READY }, source: { id: "other-extension" } },
     {
-      message: { type: PAGE_TRANSLATION },
+      message: { type: PAGE_TRANSLATION, target: "ja" },
       source: {
         ...sender,
         tab: {
@@ -238,6 +196,8 @@ it("ignores foreign senders, content senders and malformed messages", () => {
         },
       },
     },
+    { message: { type: PAGE_TRANSLATION, target: "invalid" }, source: sender },
+    { message: { type: PAGE_TRANSLATION }, source: sender },
     { message: null, source: sender },
     { message: { type: "unknown" }, source: sender },
   ]) {
@@ -247,7 +207,6 @@ it("ignores foreign senders, content senders and malformed messages", () => {
   }
   expect(respond).not.toHaveBeenCalled();
   expect(controller.toggle).not.toHaveBeenCalled();
-  expect(extractArticle).not.toHaveBeenCalled();
 });
 
 it("forwards valid progress without replying", () => {
@@ -285,4 +244,13 @@ it("resets on pagehide and removes listeners when invalidated", () => {
   expect(removeSettings).toHaveBeenCalledTimes(1);
   window.dispatchEvent(new Event("pagehide"));
   expect(controller.reset).toHaveBeenCalledTimes(1);
+});
+
+it("applies feature changes received before the initial settings finish", async () => {
+  const initial = Promise.withResolvers<{ translationEnabled: boolean }>();
+  vi.mocked(browser.storage.local.get).mockImplementation(() => initial.promise);
+  startContentScript();
+  settingsChanged({ translationEnabled: { newValue: false } }, "local");
+  initial.resolve({ translationEnabled: true });
+  await vi.waitFor(() => expect(controller.setEnabled).toHaveBeenCalledExactlyOnceWith(false));
 });

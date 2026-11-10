@@ -4,8 +4,9 @@ import { browser } from "wxt/browser";
 import { watchFeatures, type Features } from "../../lib/features";
 import { COPY_REQUEST, type CopyKind, isRecord, errorText } from "../../lib/copy-protocol";
 import { FeatureToggles } from "../../lib/feature-toggles";
-import { PAGE_TRANSLATION } from "../../features/translate/shared";
+import { type TargetLanguage, type TranslationMode } from "../../features/translate/shared";
 import { sendPageTranslationMessage } from "../../features/translate/page-bridge";
+import { readTranslationMode, saveTranslationMode } from "../../features/translate/settings";
 import "../../lib/ui.css";
 
 function Popup() {
@@ -13,7 +14,11 @@ function Popup() {
   const [tabId, setTabId] = useState<number>();
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
+  const [mode, setMode] = useState<TranslationMode>();
   useEffect(() => {
+    void readTranslationMode()
+      .then(setMode)
+      .catch((error) => setStatus(errorText(error)));
     void browser.tabs
       .query({ active: true, currentWindow: true })
       .then(([tab]) => {
@@ -46,18 +51,18 @@ function Popup() {
       setBusy(false);
     }
   };
-  const toggleTranslation = async () => {
-    if (tabId === undefined || busy) return;
+  const toggleTranslation = async (target: TargetLanguage) => {
+    if (tabId === undefined || busy || mode === undefined) return;
     setBusy(true);
     try {
-      const result: unknown = await sendPageTranslationMessage(tabId, PAGE_TRANSLATION);
+      const result: unknown = await sendPageTranslationMessage(tabId, target);
       if (!isRecord(result) || result.ok !== true)
         throw new Error(
           isRecord(result) && typeof result.error === "string"
             ? result.error
             : "翻訳を開始できません。ページを再読み込みしてください。",
         );
-      setStatus("原文下の翻訳表示を切り替えました。");
+      setStatus("翻訳表示を切り替えました。");
     } catch (error) {
       setStatus(errorText(error));
     } finally {
@@ -112,28 +117,50 @@ function Popup() {
           </span>
         </button>
       </div>
+      <label htmlFor="translation-mode">ページ翻訳の表示方式</label>
+      <select
+        id="translation-mode"
+        value={mode ?? "below"}
+        disabled={busy || mode === undefined}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (busy || mode === undefined || (next !== "below" && next !== "replace")) return;
+          setBusy(true);
+          void saveTranslationMode(next)
+            .then(() => {
+              setMode(next);
+              setStatus("表示方式を保存しました。次の翻訳から使用します。");
+            })
+            .catch((error) => setStatus(errorText(error)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        <option value="below">原文＋翻訳の二段表示</option>
+        <option value="replace">原文を翻訳に置き換え</option>
+      </select>
       <div className="popup-actions translation-actions">
         <button
           className="primary-action"
-          disabled={busy || tabId === undefined || !features?.translationEnabled}
-          onClick={() => void toggleTranslation()}
+          disabled={
+            busy || mode === undefined || tabId === undefined || !features?.translationEnabled
+          }
+          onClick={() => void toggleTranslation("ja")}
         >
           <svg aria-hidden="true" viewBox="0 0 24 24">
             <path d="M3 5h12M9 3v2m4 0c-1 6-4 9-9 12m1-9c1 3 3 6 7 8m1 5 5-12 5 12m-8-4h6" />
           </svg>
           <span>
-            <strong>原文の下に日本語訳</strong>
+            <strong>日本語に翻訳</strong>
             <small>
-              開始／解除 <kbd>Option+A</kbd> ・ 置き換え <kbd>Option+Shift+A</kbd>
+              開始／解除 <kbd>Option+A</kbd>
             </small>
           </span>
         </button>
         <button
-          disabled={tabId === undefined || !features?.translationEnabled}
-          onClick={() => {
-            if (tabId !== undefined)
-              void browser.sidePanel.open({ tabId }).catch((error) => setStatus(errorText(error)));
-          }}
+          disabled={
+            busy || mode === undefined || tabId === undefined || !features?.translationEnabled
+          }
+          onClick={() => void toggleTranslation("ja-easy")}
         >
           <svg aria-hidden="true" viewBox="0 0 24 24">
             <rect x="3" y="4" width="18" height="16" rx="2" />
@@ -142,7 +169,7 @@ function Popup() {
           <span>
             <strong>やさしい日本語で読む</strong>
             <small>
-              サイドパネルで翻訳 <kbd>Option+B</kbd>
+              開始／解除 <kbd>Option+Shift+A</kbd>
             </small>
           </span>
         </button>

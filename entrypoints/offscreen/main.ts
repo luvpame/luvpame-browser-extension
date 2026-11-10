@@ -30,9 +30,7 @@ browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
     !isSessionId(message.sessionId) ||
     typeof message.text !== "string" ||
     (message.target !== "ja" && message.target !== "ja-easy") ||
-    (message.priority !== "selection" &&
-      message.priority !== "page" &&
-      message.priority !== "article")
+    (message.priority !== "selection" && message.priority !== "page")
   ) {
     respond({ requestId: message.requestId, ok: false, error: "翻訳リクエストが不正です。" });
     return;

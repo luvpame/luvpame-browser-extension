@@ -9,7 +9,6 @@ import {
   CANCEL_TRANSLATION,
   TRANSLATION_PROGRESS,
   PAGE_TRANSLATION,
-  PAGE_REPLACEMENT_TRANSLATION,
   OFFSCREEN_TRANSLATE,
   OFFSCREEN_CANCEL,
   isSessionId,
@@ -17,12 +16,13 @@ import {
   isTranslationResult,
   isTranslationUpdate,
   type TranslationResult,
+  type TargetLanguage,
 } from "./shared";
 
 export const registerTranslationBackground = (): void => {
   const sessions = new Map<
     string,
-    { tabId?: number; localId: string; sessionId: string; requestId: string; cancelled: boolean }
+    { tabId: number; localId: string; sessionId: string; requestId: string; cancelled: boolean }
   >();
   const routeKey = (sessionId: string, requestId: string) => JSON.stringify([sessionId, requestId]);
   browser.runtime.onMessage.addListener((message: unknown, sender, respond) => {
@@ -42,17 +42,14 @@ export const registerTranslationBackground = (): void => {
         requestId: route.requestId,
         update: message.update,
       };
-      if (route.tabId !== undefined)
-        void browser.tabs.sendMessage(route.tabId, progress).catch(() => {});
-      else void browser.runtime.sendMessage(progress).catch(() => {});
+      void browser.tabs.sendMessage(route.tabId, progress).catch(() => {});
       return;
     }
     const content =
       sender.tab?.id !== undefined && sender.frameId === 0 && /^https?:\/\//.test(sender.url ?? "");
-    const panel = sender.url === browser.runtime.getURL("/sidepanel.html");
-    if (!content && !panel) return;
+    if (!content || sender.tab?.id === undefined) return;
     if (!isSessionId(message.sessionId)) return;
-    const sessionId = `${content ? `tab-${sender.tab?.id}` : "panel"}:${message.sessionId}`;
+    const sessionId = `tab-${sender.tab.id}:${message.sessionId}`;
     if (message.type === CANCEL_TRANSLATION) {
       for (const route of sessions.values())
         if (route.sessionId === sessionId) route.cancelled = true;
@@ -71,7 +68,7 @@ export const registerTranslationBackground = (): void => {
       return;
     }
     const route = {
-      tabId: content ? sender.tab?.id : undefined,
+      tabId: sender.tab.id,
       localId: message.sessionId,
       sessionId,
       requestId: message.requestId,
@@ -111,13 +108,10 @@ export const registerTranslationBackground = (): void => {
     return true;
   });
 
-  const toggle = async (
-    tabId: number,
-    type: typeof PAGE_TRANSLATION | typeof PAGE_REPLACEMENT_TRANSLATION = PAGE_TRANSLATION,
-  ) => {
+  const toggle = async (tabId: number, target: TargetLanguage = "ja") => {
     try {
       if (!(await readFeatures()).translationEnabled) throw new Error("翻訳機能はOFFです。");
-      const result: unknown = await sendPageTranslationMessage(tabId, type);
+      const result: unknown = await sendPageTranslationMessage(tabId, target);
       if (isRecord(result) && result.ok === false) throw new Error(String(result.error));
     } catch (error) {
       await browser.notifications.create({
@@ -129,39 +123,30 @@ export const registerTranslationBackground = (): void => {
     }
   };
   browser.commands.onCommand.addListener((command, tab) => {
-    if (command === "open-easy-article") {
-      if (tab?.id !== undefined)
-        void browser.sidePanel.open({ tabId: tab.id }).catch(console.error);
-      return;
-    }
-    if (command !== "toggle-page-translation" && command !== "toggle-page-replacement-translation")
-      return;
-    const type =
-      command === "toggle-page-replacement-translation"
-        ? PAGE_REPLACEMENT_TRANSLATION
-        : PAGE_TRANSLATION;
+    if (command !== "toggle-page-translation" && command !== "toggle-easy-page-translation") return;
+    const target = command === "toggle-easy-page-translation" ? "ja-easy" : "ja";
     if (tab?.id !== undefined) {
-      void toggle(tab.id, type);
+      void toggle(tab.id, target);
       return;
     }
     void browser.tabs
       .query({ active: true, currentWindow: true })
       .then(([activeTab]) => {
-        if (activeTab?.id !== undefined) return toggle(activeTab.id, type);
+        if (activeTab?.id !== undefined) return toggle(activeTab.id, target);
       })
       .catch(console.error);
   });
   const menus = [
     {
       id: PAGE_TRANSLATION,
-      title: "原文下の日本語訳を開始／解除（Option+A）",
+      title: "日本語訳を開始／解除（Option+A）",
       contexts: ["all"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
       enabled: true,
     },
     {
-      id: "luvpame:easy-article",
-      title: "本文をやさしい日本語で読む（Option+B）",
+      id: "luvpame:easy-page-translation",
+      title: "やさしい日本語訳を開始／解除（Option+Shift+A）",
       contexts: ["all"],
       documentUrlPatterns: ["http://*/*", "https://*/*"],
       enabled: true,
@@ -216,8 +201,7 @@ export const registerTranslationBackground = (): void => {
   browser.contextMenus.onClicked.addListener((info, tab) => {
     if (tab?.id === undefined) return;
     if (info.menuItemId === PAGE_TRANSLATION) void toggle(tab.id);
-    if (info.menuItemId === "luvpame:easy-article")
-      void browser.sidePanel.open({ tabId: tab.id }).catch(console.error);
+    if (info.menuItemId === "luvpame:easy-page-translation") void toggle(tab.id, "ja-easy");
   });
   browser.tabs.onRemoved.addListener((tabId) => {
     for (const route of sessions.values()) {

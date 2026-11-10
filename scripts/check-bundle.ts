@@ -17,7 +17,6 @@ assert.deepEqual(
     "notifications",
     "offscreen",
     "contextMenus",
-    "sidePanel",
   ].sort(),
 );
 assert.deepEqual(
@@ -30,11 +29,13 @@ assert.deepEqual(
   ].sort(),
 );
 assert.equal(manifest.content_scripts.length, 4);
-assert.equal(manifest.side_panel.default_path, "sidepanel.html");
+assert.equal(manifest.side_panel, undefined);
+assert.equal(manifest.commands["open-easy-article"], undefined);
+assert.equal(manifest.commands["toggle-page-replacement-translation"], undefined);
+await assert.rejects(access(path.join(root, "sidepanel.html")));
 for (const [command, key] of [
   ["toggle-page-translation", "Alt+A"],
-  ["toggle-page-replacement-translation", "Alt+Shift+A"],
-  ["open-easy-article", "Alt+B"],
+  ["toggle-easy-page-translation", "Alt+Shift+A"],
 ] as const) {
   assert.equal(manifest.commands[command].suggested_key.default, key);
   assert.equal(manifest.commands[command].suggested_key.mac, key);
@@ -49,7 +50,6 @@ for (const file of [
   "offscreen.html",
   "options.html",
   "popup.html",
-  "sidepanel.html",
   "vendor/wllama.wasm",
   "vendor/wllama-worker.js",
   "vendor/wllama-pthread.js",

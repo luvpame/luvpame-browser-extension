@@ -4,18 +4,17 @@ export const TRANSLATE = "luvpame:translate";
 export const CANCEL_TRANSLATION = "luvpame:cancel-translation";
 export const TRANSLATION_PROGRESS = "luvpame:translation-progress";
 export const PAGE_TRANSLATION = "luvpame:page-translation";
-export const PAGE_REPLACEMENT_TRANSLATION = "luvpame:page-replacement-translation";
 export const TRANSLATION_READY = "luvpame:translation-ready";
-export const ARTICLE_REQUEST = "luvpame:article-request";
 export const OFFSCREEN_TRANSLATE = "luvpame:offscreen-translate";
 export const OFFSCREEN_CANCEL = "luvpame:offscreen-cancel-translation";
+export type TranslationMode = "below" | "replace";
 export type TargetLanguage = "ja" | "ja-easy";
 export type TranslationModel = "0.8b" | "2b";
 export type TranslationDevice = "gpu" | "cpu";
 export type TranslationProvider =
   | { kind: "browser"; model: TranslationModel }
   | { kind: "ollama"; model: string };
-export type TranslationPriority = "selection" | "page" | "article";
+export type TranslationPriority = "selection" | "page";
 export type TranslationUpdate =
   | { kind: "status"; message: string }
   | { kind: "text"; text: string };
@@ -48,7 +47,7 @@ export const isTranslationRequest = (value: unknown): value is TranslationReques
   (value.target === "ja" || value.target === "ja-easy") &&
   isSessionId(value.sessionId) &&
   isSessionId(value.requestId) &&
-  (value.priority === "selection" || value.priority === "page" || value.priority === "article");
+  (value.priority === "selection" || value.priority === "page");
 export const isTranslationResult = (value: unknown): value is TranslationResult =>
   isRecord(value) &&
   ((value.ok === true &&

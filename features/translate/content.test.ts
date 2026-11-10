@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { createTranslationController, extractArticle, splitTranslationText } from "./content";
+import { createTranslationController, splitTranslationText } from "./content";
 import { CANCEL_TRANSLATION, TRANSLATE, isTranslationRequest } from "./shared";
 import { scheduleTranslation } from "./scheduler";
 
@@ -608,30 +608,6 @@ describe("原文を置き換えるページ翻訳", () => {
     controller.dispose();
     expect(node.textContent).toBe("New sentence.");
   });
-
-  it("置換中でもやさしい翻訳へ原文を渡し、ページの訳と隣接Textノードを保つ", async () => {
-    const first = "This article explains how the application reduces JavaScript for its readers. ";
-    const second =
-      "Readers can understand the original article without losing any important details. ";
-    document.body.innerHTML = "<article><h1>Original article title</h1><p></p></article>";
-    const paragraph = document.querySelector("p")!;
-    paragraph.append(
-      document.createTextNode(first.repeat(8)),
-      document.createTextNode(second.repeat(8)),
-    );
-    const controller = mount(async () => success("日本語の本文です。"));
-    controller.toggle("replace");
-    await tick();
-    const translated = document.body.innerHTML;
-    const result = await controller.extractArticle();
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("原文を抽出できませんでした");
-    expect(result.paragraphs.join("\n")).toContain(first.trim());
-    expect(result.paragraphs.join("\n")).toContain(second.trim());
-    expect(result.paragraphs.join("\n")).not.toContain("日本語の本文です。");
-    expect(document.body.innerHTML).toBe(translated);
-    expect(paragraph.childNodes).toHaveLength(2);
-  });
 });
 
 describe("選択翻訳", () => {
@@ -648,6 +624,29 @@ describe("選択翻訳", () => {
     selection.addRange(range);
     document.dispatchEvent(new Event("selectionchange"));
   }
+
+  it("やさしいページ翻訳中も選択翻訳先は通常の日本語を使う", async () => {
+    document.body.innerHTML = "<p>A selected English sentence.</p>";
+    const requests: unknown[] = [];
+    const controller = mount(async (message) => {
+      requests.push(message);
+      return success();
+    });
+    controller.toggle("below", "ja-easy");
+    await tick();
+    select();
+    document
+      .querySelector('[data-luvpame-translation="selection"]')
+      ?.shadowRoot?.querySelector("button")
+      ?.click();
+    await tick();
+    expect(requests).toContainEqual(
+      expect.objectContaining({ type: TRANSLATE, priority: "page", target: "ja-easy" }),
+    );
+    expect(requests).toContainEqual(
+      expect.objectContaining({ type: TRANSLATE, priority: "selection", target: "ja" }),
+    );
+  });
 
   it.each([
     { response: success("選択した文章"), text: "選択した文章" },
@@ -822,42 +821,6 @@ it.each([
   expect(chunks.every((chunk) => chunk.length <= 1200 && chunk.isWellFormed())).toBe(true);
 });
 
-it("記事全体を元ページの変更や文字数切捨てなしで抽出する", async () => {
-  const sentences = Array.from(
-    { length: 45 },
-    (_, index) =>
-      `Article paragraph ${index}: ` +
-      "A detailed account of the event contains the complete facts and explanations. ".repeat(8),
-  );
-  document.body.innerHTML = `<nav><p>Navigation must not appear.</p></nav><article><header><h1>The complete story</h1></header>${sentences.map((text) => `<p>${text}</p>`).join("")}</article>`;
-  const original = document.body.innerHTML;
-  const result = await extractArticle();
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw new Error("本文が抽出されませんでした");
-  const text = result.paragraphs.join("\n");
-  for (const sentence of sentences) expect(text).toContain(sentence.trim());
-  expect(text).not.toContain("Navigation must not appear.");
-  expect(document.body.innerHTML).toBe(original);
-});
-
-it("記事抽出にも本文の範囲と図・操作UIの除外を適用する", async () => {
-  const sentence = "This article explains how the application reduces JavaScript for its readers. ";
-  document.body.innerHTML = `<main><p>Outside article content.</p><article><h1>Article extraction</h1>
-    <div itemprop="articleBody">${Array.from({ length: 8 }, () => `<p>${sentence.repeat(5)}</p>`).join("")}
-      <figure><p>Figure demo text.</p></figure><div role="img"><p>Diagram demo text.</p></div>
-      <div class="not-prose"><p>Interactive demo text.</p></div><label>Control demo text.</label>
-      <p translate="no">Untranslated demo text.</p>
-    </div><p>Outside article body.</p></article></main>`;
-  const original = document.body.innerHTML;
-  const result = await extractArticle();
-  expect(result.ok).toBe(true);
-  if (!result.ok) throw new Error("本文が抽出されませんでした");
-  const text = result.paragraphs.join("\n");
-  expect(text).toContain(sentence.trim());
-  expect(text).not.toMatch(/demo text|Outside article/);
-  expect(document.body.innerHTML).toBe(original);
-});
-
 it("rechecks the viewport before filling each free paragraph slot", async () => {
   document.body.innerHTML =
     "<p>First offscreen.</p><p>Second near.</p><p>Third visible.</p><p>Fourth near.</p><p>Fifth offscreen.</p><p>Sixth moves.</p>";
@@ -972,4 +935,48 @@ it("keeps completed chunks while streaming the current one and ignores old reque
   requests[2]?.finish(success("置換後"));
   await tick();
   expect(output()).toEqual(["置換後"]);
+});
+
+describe.each(["below", "replace"] as const)("表示方式 %s と翻訳先", (mode) => {
+  it.each(["ja", "ja-easy"] as const)(
+    "%s を指定方式で表示し同じ組合せで解除する",
+    async (target) => {
+      document.body.innerHTML = "<p>Original sentence.</p>";
+      const send = vi.fn(async (_message: unknown) => success());
+      const controller = mount(send);
+      controller.toggle(mode, target);
+      await tick();
+      expect(send).toHaveBeenCalledWith(expect.objectContaining({ type: TRANSLATE, target }));
+      expect(document.querySelector("p")?.textContent).toBe(
+        mode === "replace" ? "日本語の訳" : "Original sentence.",
+      );
+      expect(output()).toEqual(mode === "below" ? ["日本語の訳"] : []);
+      expect(controller.toggle(mode, target)).toEqual({ ok: true, active: false });
+      expect(document.body.innerHTML).toBe("<p>Original sentence.</p>");
+    },
+  );
+  it("翻訳先を切り替えると原文を再翻訳し、古い進捗と応答を無視する", async () => {
+    document.body.innerHTML = "<p>Original sentence.</p>";
+    const pending: { sessionId: string; requestId: string; finish: (result: unknown) => void }[] =
+      [];
+    const controller = mount(async (message) => {
+      if (!isTranslationRequest(message)) return { ok: true };
+      expect(message.text).toBe("Original sentence.");
+      return new Promise((finish) => pending.push({ ...message, finish }));
+    });
+    controller.toggle(mode, "ja");
+    const first = pending[0]!;
+    controller.progress(first.sessionId, first.requestId, { kind: "text", text: "通常の途中訳" });
+    expect(controller.toggle(mode, "ja-easy")).toEqual({ ok: true, active: true });
+    controller.progress(first.sessionId, first.requestId, { kind: "text", text: "古い途中訳" });
+    first.finish(success("古い完了訳"));
+    await tick();
+    expect(document.querySelector("p")?.textContent).toBe("Original sentence.");
+    expect(output().join("")).not.toContain("古い");
+    pending[1]!.finish(success("やさしい訳"));
+    await tick();
+    expect(mode === "below" ? output()[0] : document.querySelector("p")?.textContent).toBe(
+      "やさしい訳",
+    );
+  });
 });

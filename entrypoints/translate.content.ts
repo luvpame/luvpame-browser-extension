@@ -1,12 +1,11 @@
 import { defineContentScript } from "#imports";
 import { browser } from "wxt/browser";
 import { watchFeatures } from "../lib/features";
-import { isRecord } from "../lib/copy-protocol";
+import { readTranslationMode } from "../features/translate/settings";
+import { errorText, isRecord } from "../lib/copy-protocol";
 import { createTranslationController } from "../features/translate/content";
 import {
-  ARTICLE_REQUEST,
   PAGE_TRANSLATION,
-  PAGE_REPLACEMENT_TRANSLATION,
   TRANSLATION_PROGRESS,
   TRANSLATION_READY,
   isTranslationUpdate,
@@ -16,12 +15,10 @@ export default defineContentScript({
   matches: ["http://*/*", "https://*/*"],
   main(ctx) {
     const controller = createTranslationController();
-    let enabled = false;
     const ready = new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
       const stop = watchFeatures(
         (settings) => {
-          enabled = settings.translationEnabled;
-          controller.setEnabled(enabled);
+          controller.setEnabled(settings.translationEnabled);
           resolve({ ok: true });
         },
         (error) =>
@@ -43,34 +40,22 @@ export default defineContentScript({
         return;
       }
       if (
-        message.type === PAGE_TRANSLATION ||
-        message.type === PAGE_REPLACEMENT_TRANSLATION ||
-        message.type === ARTICLE_REQUEST
+        message.type === PAGE_TRANSLATION &&
+        (message.target === "ja" || message.target === "ja-easy")
       ) {
-        void ready.then((result) => {
+        const target = message.target;
+        void ready.then(async (result) => {
           if (ctx.isInvalid) return;
           if (!result.ok) {
             respond(result);
             return;
           }
-          if (message.type === PAGE_TRANSLATION) {
-            respond(controller.toggle());
-            return;
+          try {
+            const mode = await readTranslationMode();
+            if (!ctx.isInvalid) respond(controller.toggle(mode, target));
+          } catch (error) {
+            if (!ctx.isInvalid) respond({ ok: false, error: errorText(error) });
           }
-          if (message.type === PAGE_REPLACEMENT_TRANSLATION) {
-            respond(controller.toggle("replace"));
-            return;
-          }
-          if (!enabled) {
-            respond({ ok: false, error: "翻訳はOFFです。" });
-            return;
-          }
-          void controller.extractArticle().then(respond, (error: unknown) =>
-            respond({
-              ok: false,
-              error: error instanceof Error ? error.message : "本文を取得できませんでした。",
-            }),
-          );
         });
         return true;
       }

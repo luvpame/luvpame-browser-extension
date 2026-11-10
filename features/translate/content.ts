@@ -5,6 +5,8 @@ import {
   TRANSLATE,
   isTranslationResult,
   type TranslationPriority,
+  type TranslationMode,
+  type TargetLanguage,
   type TranslationUpdate,
 } from "./shared";
 
@@ -70,56 +72,8 @@ function paragraphs(root: Element): Element[] {
   );
 }
 
-export async function extractArticle(
-  doc: Document = document,
-  originalText: ReadonlyMap<Text, string> = new Map(),
-): Promise<
-  { ok: true; url: string; title: string; paragraphs: string[] } | { ok: false; error: string }
-> {
-  const copy = doc.implementation.createHTMLDocument();
-  copy.replaceChild(copy.importNode(doc.documentElement, true), copy.documentElement);
-  if (originalText.size) {
-    const sourceWalker = doc.createTreeWalker(doc.documentElement, NodeFilter.SHOW_TEXT);
-    const copyWalker = copy.createTreeWalker(copy.documentElement, NodeFilter.SHOW_TEXT);
-    while (sourceWalker.nextNode() && copyWalker.nextNode()) {
-      const source = sourceWalker.currentNode;
-      if (source instanceof Text) {
-        const original = originalText.get(source);
-        if (original !== undefined) copyWalker.currentNode.textContent = original;
-      }
-    }
-  }
-  const roots = articleRoots(copy);
-  if (!roots.includes(copy.body)) copy.body.replaceChildren(...roots);
-  copy.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
-  const { default: Defuddle } = await import("defuddle/full");
-  const result = new Defuddle(copy, { url: doc.location.href }).parse();
-  const article = new DOMParser().parseFromString(result.content, "text/html");
-  article.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
-  const texts: string[] = [];
-  const walker = article.createTreeWalker(article.body, NodeFilter.SHOW_TEXT);
-  let previousBlock: Element | null = null;
-  let paragraph = "";
-  while (walker.nextNode()) {
-    const node = walker.currentNode;
-    const parent = node.parentElement;
-    if (!parent || parent.closest(PAGE_EXCLUDED)) continue;
-    const block = parent.closest(BLOCKS) ?? article.body;
-    if (block !== previousBlock && paragraph.trim()) {
-      texts.push(paragraph.trim());
-      paragraph = "";
-    }
-    previousBlock = block;
-    paragraph += node.textContent ?? "";
-  }
-  if (paragraph.trim()) texts.push(paragraph.trim());
-  if (!texts.length) return { ok: false, error: "読み取れる本文がありません。" };
-  return { ok: true, url: doc.location.href, title: result.title || doc.title, paragraphs: texts };
-}
-
 type Send = (message: unknown) => Promise<unknown>;
 
-type TranslationMode = "below" | "replace";
 type Output = { host: HTMLElement; output: HTMLElement };
 type Entry = {
   text: string;
@@ -143,7 +97,7 @@ export function createTranslationController({
   const win = doc.defaultView;
   if (!win) throw new Error("ページが見つかりません。");
   let enabled = false;
-  let mode: TranslationMode | undefined;
+  let active: { mode: TranslationMode; target: TargetLanguage } | undefined;
   let generation = 0;
   let sessionId = "";
   let runningGeneration: number | undefined;
@@ -166,6 +120,7 @@ export function createTranslationController({
     current: () => boolean,
     output: (text: string) => void,
     priority: TranslationPriority,
+    target: TargetLanguage,
   ) => {
     const parts: string[] = [];
     for (const chunk of splitTranslationText(text)) {
@@ -182,7 +137,7 @@ export function createTranslationController({
         const result = await send({
           type: TRANSLATE,
           text: chunk,
-          target: "ja",
+          target,
           sessionId: id,
           requestId,
           priority,
@@ -261,15 +216,16 @@ export function createTranslationController({
     }
   };
   const pump = async () => {
-    if (runningGeneration === generation || !mode) return;
+    if (runningGeneration === generation || !active) return;
     const epoch = generation;
     runningGeneration = epoch;
     const id = sessionId;
+    const target = active.target;
     const tasks = new Set<Promise<void>>();
     const processEntry = async (key: Element | Text, entry: Entry) => {
       entry.state = "running";
       const current = () =>
-        !!mode &&
+        !!active &&
         epoch === generation &&
         key.isConnected &&
         entries.get(key) === entry &&
@@ -283,6 +239,7 @@ export function createTranslationController({
             showText(entry, text);
           },
           "page",
+          target,
         );
         if (current() && text !== undefined) showText(entry, text);
       } catch (error) {
@@ -303,7 +260,7 @@ export function createTranslationController({
       }
     };
     try {
-      while (mode && epoch === generation) {
+      while (active && epoch === generation) {
         // 応答待ちで次の波が欠けないよう、実行2件に加えて次の2件を先読みする。
         while (tasks.size < 4) {
           const next = Array.from(entries)
@@ -342,16 +299,16 @@ export function createTranslationController({
     } finally {
       if (runningGeneration === epoch) {
         runningGeneration = undefined;
-        if (mode && Array.from(entries.values()).some((entry) => entry.state === "queued"))
+        if (active && Array.from(entries.values()).some((entry) => entry.state === "queued"))
           void pump();
       }
     }
   };
   const refresh = () => {
-    if (!mode) return;
+    if (!active) return;
     const candidates = new Map<Element | Text, Element>();
     for (const element of articleRoots(doc).flatMap(paragraphs)) {
-      if (mode === "below") {
+      if (active.mode === "below") {
         if (english(sourceText(element))) candidates.set(element, element);
       } else {
         const walker = doc.createTreeWalker(element, win.NodeFilter.SHOW_TEXT);
@@ -374,9 +331,9 @@ export function createTranslationController({
     }
     for (const [key, element] of candidates) {
       if (entries.has(key)) continue;
-      if (mode === "below") {
+      if (active.mode === "below") {
         const entry: Entry = {
-          mode,
+          mode: active.mode,
           element,
           text: sourceText(element),
           ...createOutput(element),
@@ -386,7 +343,7 @@ export function createTranslationController({
         placeOutput(element, entry.host);
       } else if (key instanceof win.Text && english(key.data)) {
         entries.set(key, {
-          mode,
+          mode: active.mode,
           element,
           node: key,
           original: key.data,
@@ -533,6 +490,7 @@ export function createTranslationController({
           output.textContent = text;
         },
         "selection",
+        "ja",
       )
         .then((result) => {
           if (selectionSession === id && result !== undefined) output.textContent = result;
@@ -554,7 +512,7 @@ export function createTranslationController({
     positionSelection();
   };
   const reset = () => {
-    mode = undefined;
+    active = undefined;
     generation += 1;
     cancel(sessionId);
     sessionId = "";
@@ -578,12 +536,12 @@ export function createTranslationController({
       enabled = value;
       if (!value) reset();
     },
-    toggle(nextMode: TranslationMode = "below") {
+    toggle(nextMode: TranslationMode = "below", nextTarget: TargetLanguage = "ja") {
       if (!enabled) return { ok: false, error: "翻訳はOFFです。" };
-      const stop = mode === nextMode;
+      const stop = active?.mode === nextMode && active.target === nextTarget;
       reset();
       if (!stop) {
-        mode = nextMode;
+        active = { mode: nextMode, target: nextTarget };
         sessionId = crypto.randomUUID();
         observer.observe(doc.documentElement, {
           subtree: true,
@@ -602,15 +560,7 @@ export function createTranslationController({
         });
         refresh();
       }
-      return { ok: true, active: !!mode };
-    },
-    extractArticle() {
-      const originals = new Map<Text, string>();
-      for (const entry of entries.values()) {
-        if (entry.mode === "replace" && entry.node.data === entry.applied)
-          originals.set(entry.node, entry.original);
-      }
-      return extractArticle(doc, originals);
+      return { ok: true, active: !!active };
     },
     progress(id: string, requestId: string, update: TranslationUpdate) {
       const request = requests.get(requestId);

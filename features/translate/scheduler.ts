@@ -11,7 +11,7 @@ type Resource = { group: string; capacity: () => number };
 type Job = Resource & { priority: number; run: () => Promise<void> };
 const pending: Job[] = [];
 let active = 0;
-const priorities = { selection: 0, page: 1, article: 2 };
+const priorities = { selection: 0, page: 1 };
 
 function drain() {
   if (active) return;

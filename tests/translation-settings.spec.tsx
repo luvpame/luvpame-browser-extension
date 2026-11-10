@@ -52,3 +52,45 @@ it("keeps each saved model and recovers from an invalid draft when switching bac
     translationOllamaModel: "saved-plamo:local",
   });
 });
+
+it("saves the display mode and restores it after reopening settings", async () => {
+  let translationMode = "below";
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({ translationMode }));
+  vi.mocked(browser.storage.local.set).mockImplementation(async (value) => {
+    if ("translationMode" in value && typeof value.translationMode === "string")
+      translationMode = value.translationMode;
+  });
+  await act(async () => root.render(<TranslationModelSettings />));
+  const select = container.querySelector<HTMLSelectElement>("#translation-mode")!;
+  expect(select.value).toBe("below");
+  await act(async () => {
+    select.value = "replace";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(translationMode).toBe("replace");
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("次の翻訳から使用");
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await act(async () => root.render(<TranslationModelSettings />));
+  expect(container.querySelector<HTMLSelectElement>("#translation-mode")?.value).toBe("replace");
+});
+it("keeps the saved mode selected when saving fails", async () => {
+  await act(async () => root.render(<TranslationModelSettings />));
+  vi.mocked(browser.storage.local.set).mockRejectedValueOnce(new Error("保存できません"));
+  const select = container.querySelector<HTMLSelectElement>("#translation-mode")!;
+  await act(async () => {
+    select.value = "replace";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(select.value).toBe("below");
+  expect(select.disabled).toBe(false);
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("保存できません");
+});
+it("reports settings read failures and keeps controls disabled", async () => {
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => {
+    throw new Error("読込できません");
+  });
+  await act(async () => root.render(<TranslationModelSettings />));
+  expect(container.querySelector<HTMLSelectElement>("#translation-mode")?.disabled).toBe(true);
+  expect(container.querySelector('[role="status"]')?.textContent).toBe("読込できません");
+});
