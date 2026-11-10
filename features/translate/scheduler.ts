@@ -7,21 +7,58 @@ import type {
 } from "./shared";
 
 type Output = Omit<Extract<TranslationResult, { ok: true }>, "ok">;
-type Resource = { group: string; capacity: () => number };
-type Job = Resource & { priority: number; run: () => Promise<void> };
+type Resource = { group: string; capacity: () => number; size?: number; rank?: () => number };
+type Job = Resource & {
+  priority: number;
+  order: number;
+  queuedAt: number;
+  run: () => Promise<void>;
+};
 const pending: Job[] = [];
 let active = 0;
+let sequence = 0;
 const priorities = { selection: 0, page: 1 };
 
 function drain() {
   if (active) return;
-  pending.sort((a, b) => a.priority - b.priority);
+  const now = Date.now();
+  const aged = (job: Job) => now - job.queuedAt >= 15_000;
+  const rank = (job: Job) => job.rank?.() ?? 0;
+  const sameBand = (a: Job, b: Job) =>
+    a.priority === b.priority && aged(a) === aged(b) && (aged(a) || rank(a) === rank(b));
+  pending.sort(
+    (a, b) =>
+      a.priority - b.priority ||
+      Number(aged(b)) - Number(aged(a)) ||
+      (aged(a) ? 0 : rank(a) - rank(b)) ||
+      a.order - b.order,
+  );
   const first = pending[0];
   if (!first) return;
   const capacity = first.capacity();
   const wave: Job[] = [];
+  let pair: Job | undefined;
   while (wave.length < capacity && pending[0]?.group === first.group) {
-    const next = pending.shift();
+    let index = 0;
+    const head = pending[0];
+    if (!pair || !sameBand(pair, head)) {
+      pair = head;
+    } else if (pair.size !== undefined && head.size !== undefined) {
+      let distance = Math.abs(head.size - pair.size);
+      for (let i = 1; i < pending.length; i += 1) {
+        const candidate = pending[i];
+        if (!candidate || candidate.group !== first.group || !sameBand(candidate, head)) {
+          break;
+        }
+        if (candidate.size === undefined) break;
+        const candidateDistance = Math.abs(candidate.size - pair.size);
+        if (candidateDistance < distance) {
+          index = i;
+          distance = candidateDistance;
+        }
+      }
+    }
+    const [next] = pending.splice(index, 1);
     if (next) wave.push(next);
   }
   active = wave.length;
@@ -51,6 +88,8 @@ export function scheduleTranslation<T>(
     const job: Job = {
       ...resource,
       priority: priorities[options.priority ?? "page"],
+      order: sequence++,
+      queuedAt: Date.now(),
       run: async () => {
         try {
           options.signal.throwIfAborted();

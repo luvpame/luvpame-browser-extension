@@ -22,8 +22,10 @@ type InFlightTranslation = {
 };
 const inFlight = new Map<string, InFlightTranslation>();
 
-const modelUrl = (model: TranslationModel) =>
-  `https://huggingface.co/pfnet/plamo-3-translate-${model}-GGUF/resolve/main/plamo-3-translate-${model}-Q4_K_M.gguf`;
+const modelUrl = (model: TranslationModel) => {
+  const main = model === "2b-speculative" ? "2b" : model;
+  return `https://huggingface.co/pfnet/plamo-3-translate-${main}-GGUF/resolve/main/plamo-3-translate-${main}-Q4_K_M.gguf`;
+};
 
 async function canUseGpu(): Promise<boolean> {
   if (!("gpu" in navigator)) return false;
@@ -54,15 +56,23 @@ async function loadModel(
   }
   options.signal.throwIfAborted();
   let device: TranslationDevice = (await canUseGpu()) ? "gpu" : "cpu";
+  let speculative = device === "gpu" && model === "2b-speculative";
   options.signal.throwIfAborted();
   for (;;) {
     let collectingLogs = true;
     let nativeDevice: TranslationDevice | undefined;
     let offloadedDevice: TranslationDevice | undefined;
+    let speculativeFailed = false;
     const captureLog = (...args: unknown[]) => {
       if (!collectingLogs) return;
       for (const message of args) {
         if (typeof message !== "string") continue;
+        if (
+          /failed to initialize speculative decoding|speculative decoding not supported/i.test(
+            message,
+          )
+        )
+          speculativeFailed = true;
         const offloaded = /offloaded (\d+)\/\d+ layers to GPU/i.exec(message);
         if (offloaded) offloadedDevice = Number(offloaded[1]) > 0 ? "gpu" : "cpu";
         if (/ggml_webgpu: Failed to get (?:an adapter|a device):/i.test(message)) {
@@ -87,13 +97,20 @@ async function loadModel(
     options.onProgress("翻訳の準備をしています…");
     try {
       await runtime.loadModelFromUrl(modelUrl(model), {
-        n_ctx: device === "gpu" ? 8192 : 4096,
-        n_parallel: device === "gpu" ? 2 : 1,
+        n_ctx: device === "gpu" && model !== "2b-speculative" ? 8192 : 4096,
+        n_parallel: device === "gpu" && model !== "2b-speculative" ? 2 : 1,
         kv_unified: false,
         swa_full: true,
         ...(device === "gpu" ? { cont_batching: true } : {}),
+        ...(speculative
+          ? { spec_draft_model: modelUrl("0.8b"), spec_draft_ngl: 999, spec_draft_n_max: 4 }
+          : {}),
         n_gpu_layers: device === "gpu" ? 999 : 0,
-        n_threads: Math.max(1, Math.min(4, Math.floor((navigator.hardwareConcurrency || 2) / 2))),
+        n_threads: Math.max(
+          1,
+          Math.min(device === "gpu" ? 4 : 8, Math.floor((navigator.hardwareConcurrency || 2) / 2)),
+        ),
+        warmup: true,
         cache_idle_slots: false,
         ctx_shift: false,
         signal: options.signal,
@@ -106,14 +123,18 @@ async function loadModel(
         },
       });
       options.signal.throwIfAborted();
-      loadedModel = { runtime, model, device: offloadedDevice ?? nativeDevice ?? device };
+      const loadedDevice = offloadedDevice ?? nativeDevice ?? device;
+      if (speculative && (speculativeFailed || loadedDevice === "cpu"))
+        throw new Error("Speculative decoding unavailable");
+      loadedModel = { runtime, model, device: loadedDevice };
       return loadedModel;
     } catch (error) {
       await runtime.exit();
       options.signal.throwIfAborted();
       if (device === "cpu") throw error;
       options.onProgress("翻訳の準備を続けています…");
-      device = "cpu";
+      if (speculative) speculative = false;
+      else device = "cpu";
     } finally {
       collectingLogs = false;
     }
@@ -139,7 +160,7 @@ async function runTranslation(
     prompt,
     max_tokens: 2048,
     temperature: 0,
-    cache_prompt: false,
+    cache_prompt: loaded.device === "cpu",
     stop: TRANSLATION_STOP,
     abortSignal: options.signal,
     stream: true,
@@ -163,6 +184,27 @@ async function runTranslation(
   }
   if (!translated.trim()) throw new Error("翻訳結果が空でした。再試行してください。");
   return { text: translated.trim(), device: loaded.device };
+}
+
+export function prepareTranslation(
+  model: TranslationModel,
+  options: TranslationOptions,
+): Promise<{ device: TranslationDevice }> {
+  return scheduleTranslation(
+    options,
+    async () => {
+      const loaded = await loadModel(model, options);
+      options.signal.throwIfAborted();
+      return { device: loaded.device };
+    },
+    {
+      group: `browser:${model}`,
+      capacity: () =>
+        model !== "2b-speculative" && loadedModel?.model === model && loadedModel.device === "gpu"
+          ? 2
+          : 1,
+    },
+  );
 }
 
 export async function translate(
@@ -208,8 +250,20 @@ export async function translate(
             },
             {
               group: `browser:${model}`,
+              size: text.length,
+              rank: () =>
+                Math.min(
+                  ...Array.from(
+                    subscribers,
+                    (subscriber) => subscriber.viewportDistance?.() ?? Infinity,
+                  ),
+                ),
               capacity: () =>
-                loadedModel?.model === model && loadedModel.device === "gpu" ? 2 : 1,
+                model !== "2b-speculative" &&
+                loadedModel?.model === model &&
+                loadedModel.device === "gpu"
+                  ? 2
+                  : 1,
             },
           ),
         )

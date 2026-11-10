@@ -83,6 +83,66 @@ function withNativeCopy(check: (directory: string) => void) {
 }
 
 describe("translation runtime", () => {
+  it.each([false, true])(
+    "keeps main and draft model files separate (draft: %s)",
+    async (withDraft) => {
+      const { moduleCode } = buildRuntime();
+      const main = new Blob(["main"]);
+      const draft = new Blob(["draft"]);
+      const getModelOrDownload = vi.fn().mockResolvedValue({ open: async () => [draft] });
+      const moduleInit = vi.fn();
+      const action = vi.fn().mockResolvedValue({ metadata_key: [], list_tokens_eog: [] });
+      const params = Object.freeze({
+        n_threads: 1,
+        ...(withDraft ? { spec_draft_model: "https://example.com/draft.gguf" } : {}),
+        signal: new AbortController().signal,
+      });
+      await runInNewContext(
+        moduleCode.replace(/export \{[\s\S]*?\};\s*$/, "") +
+          `
+        ProxyToWorker = class {
+          moduleInit = moduleInit;
+          wllamaStart = async () => ({ success: true });
+          wllamaAction = action;
+        };
+        Wllama.prototype.loadModel.call({
+          pathConfig: { default: "bundled.wasm" },
+          config: {}, logger: () => ({ debug() {} }),
+          getWorkerResources: () => ({}),
+          checkWasmVersion: async () => {},
+          modelManager: { getModelOrDownload },
+        }, [main], params);
+      `,
+        {
+          main,
+          params,
+          getModelOrDownload,
+          moduleInit,
+          action,
+          TextEncoder,
+          TextDecoder,
+          navigator: {},
+        },
+      );
+      expect(moduleInit).toHaveBeenCalledWith([
+        { name: "model-00001-of-00001.gguf", blob: main },
+        ...(withDraft ? [{ name: "draft.gguf", blob: draft }] : []),
+      ]);
+      expect(action).toHaveBeenCalledWith(
+        "load",
+        expect.objectContaining({
+          model_paths: ["models/model-00001-of-00001.gguf"],
+          spec_draft_model: withDraft ? "models/draft.gguf" : undefined,
+        }),
+      );
+      expect(getModelOrDownload).toHaveBeenCalledTimes(withDraft ? 1 : 0);
+      if (withDraft) {
+        expect(params.spec_draft_model).toBe("https://example.com/draft.gguf");
+        expect(getModelOrDownload).toHaveBeenCalledWith({ url: params.spec_draft_model }, params);
+      }
+    },
+  );
+
   it("packages valid static main, pthread and cache workers from the installed runtime", () => {
     const { moduleCode, assets } = buildRuntime();
     expect([...assets.keys()]).toEqual([

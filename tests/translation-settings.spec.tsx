@@ -17,12 +17,65 @@ beforeEach(() => {
     translationOllamaModel: "saved-plamo:local",
   }));
   vi.spyOn(browser.storage.local, "set").mockResolvedValue();
+  vi.spyOn(browser.runtime, "sendMessage").mockImplementation(async () => ({
+    ok: true,
+    device: "gpu",
+  }));
 });
 afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+});
+
+it("saves the experimental model and explains its additional download and fallback", async () => {
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({}));
+  await act(async () => root.render(<TranslationModelSettings />));
+  const select = container.querySelector<HTMLSelectElement>("#translation-model")!;
+  await act(async () => {
+    select.value = "2b-speculative";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(browser.storage.local.set).toHaveBeenLastCalledWith({
+    translationBackend: "browser",
+    translationModel: "2b-speculative",
+  });
+  expect(select.value).toBe("2b-speculative");
+  expect(container.textContent).toContain("補助モデル約573MB");
+  expect(container.textContent).toContain("通常の2B");
+  expect(browser.runtime.sendMessage).not.toHaveBeenCalled();
+});
+
+it.each(["gpu", "cpu"])("prepares the selected model explicitly on %s", async (device) => {
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({ translationModel: "2b" }));
+  vi.mocked(browser.runtime.sendMessage).mockImplementation(async () => ({ ok: true, device }));
+  await act(async () => root.render(<TranslationModelSettings />));
+  expect(browser.runtime.sendMessage).not.toHaveBeenCalled();
+  const button = container.querySelector<HTMLButtonElement>("button")!;
+  expect(button.textContent).toBe("モデルを準備");
+  await act(async () => button.click());
+  expect(browser.runtime.sendMessage).toHaveBeenCalledWith({
+    type: "luvpame:prepare-translation",
+    model: "2b",
+  });
+  expect(container.querySelector('[role="status"]')?.textContent).toBe(
+    "モデルの準備が完了しました。",
+  );
+  expect(button.disabled).toBe(false);
+});
+
+it.each([
+  [{ ok: false, error: "ダウンロードできません" }, "ダウンロードできません"],
+  [{ ok: true, device: "unknown" }, "モデルを準備できませんでした。再試行してください。"],
+] as const)("reports failed or invalid preparation replies %j", async (reply, message) => {
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({}));
+  vi.mocked(browser.runtime.sendMessage).mockImplementation(async () => reply);
+  await act(async () => root.render(<TranslationModelSettings />));
+  const button = container.querySelector<HTMLButtonElement>("button")!;
+  await act(async () => button.click());
+  expect(container.querySelector('[role="status"]')?.textContent).toBe(message);
+  expect(button.disabled).toBe(false);
 });
 
 it("keeps each saved model and recovers from an invalid draft when switching backends", async () => {

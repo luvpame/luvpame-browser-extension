@@ -67,6 +67,135 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("translate", () => {
+  it.each([true, false])("reuses prompt KV only for CPU (GPU: %s)", async (gpu) => {
+    const { translate } = await import("./engine");
+    mocks.gpu.mockResolvedValue(gpu ? {} : null);
+    await translate("prefix cache", "ja", "2b", options());
+    expect(mocks.complete).toHaveBeenCalledWith(expect.objectContaining({ cache_prompt: !gpu }));
+  });
+
+  it("prepares a model without generating text and reuses it for translation", async () => {
+    const { prepareTranslation, translate } = await import("./engine");
+    expect(await prepareTranslation("2b", options())).toEqual({ device: "gpu" });
+    expect(mocks.load).toHaveBeenCalledOnce();
+    expect(mocks.load.mock.calls[0]?.[1].warmup).toBe(true);
+    expect(mocks.complete).not.toHaveBeenCalled();
+    await translate("prepared model", "ja", "2b", options());
+    expect(mocks.load).toHaveBeenCalledOnce();
+  });
+
+  it("waits for active inference before preparing a different model", async () => {
+    const { prepareTranslation, translate } = await import("./engine");
+    const started = deferred();
+    const finish = deferred();
+    mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+      started.resolve();
+      await finish.promise;
+      params.onData(chunk("完了"));
+    });
+    const translating = translate("active", "ja", "2b", options());
+    await started.promise;
+    const preparing = prepareTranslation("0.8b", options());
+    await Promise.resolve();
+    expect(mocks.load).toHaveBeenCalledOnce();
+    expect(mocks.exit).not.toHaveBeenCalled();
+    finish.resolve();
+    await translating;
+    expect(await preparing).toEqual({ device: "gpu" });
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+    expect(mocks.complete).toHaveBeenCalledOnce();
+  });
+
+  it("loads a separate GPU draft with one slot and reuses the experimental model", async () => {
+    const { translate } = await import("./engine");
+    await translate("spec first", "ja", "2b-speculative", options());
+    await translate("spec next", "ja", "2b-speculative", options());
+    expect(mocks.load).toHaveBeenCalledOnce();
+    expect(mocks.load).toHaveBeenCalledWith(
+      expect.stringContaining("plamo-3-translate-2b-"),
+      expect.objectContaining({
+        n_ctx: 4096,
+        n_parallel: 1,
+        n_gpu_layers: 999,
+        warmup: true,
+        spec_draft_model: expect.stringContaining("plamo-3-translate-0.8b-"),
+        spec_draft_ngl: 999,
+        spec_draft_n_max: 4,
+      }),
+    );
+    await translate("spec first", "ja", "2b", options());
+    expect(mocks.complete).toHaveBeenCalledTimes(3);
+    expect(mocks.load).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    "throw",
+    "failed to initialize speculative decoding",
+    "speculative decoding not supported",
+    "llama_model_load: offloaded 0/33 layers to GPU",
+  ])(
+    "retries plain GPU 2B after a draft failure (%s) and remembers the loaded fallback",
+    async (failure) => {
+      const { translate } = await import("./engine");
+      mocks.load.mockImplementationOnce(async () => {
+        if (failure === "throw") throw new Error("draft unavailable");
+        mocks.construct.mock.calls.at(-1)?.[1]?.logger?.error(failure);
+      });
+      expect((await translate("spec fallback", "ja", "2b-speculative", options())).device).toBe(
+        "gpu",
+      );
+      await translate("spec fallback next", "ja", "2b-speculative", options());
+      expect(mocks.load).toHaveBeenCalledTimes(2);
+      expect(mocks.exit).toHaveBeenCalledOnce();
+      expect(mocks.load.mock.calls[1]?.[0]).toContain("plamo-3-translate-2b-");
+      expect(mocks.load.mock.calls[1]?.[1]).toMatchObject({ n_gpu_layers: 999, n_parallel: 1 });
+      expect(mocks.load.mock.calls[1]?.[1]).not.toHaveProperty("spec_draft_model");
+    },
+  );
+
+  it("falls back from draft GPU through plain GPU to the same CPU 2B", async () => {
+    const { translate } = await import("./engine");
+    mocks.load.mockRejectedValueOnce(new Error("draft unavailable"));
+    mocks.load.mockRejectedValueOnce(new Error("GPU unavailable"));
+    expect((await translate("spec cpu", "ja", "2b-speculative", options())).device).toBe("cpu");
+    expect(
+      mocks.load.mock.calls.map(([url, params]) => [
+        url.includes("plamo-3-translate-2b-"),
+        params.n_gpu_layers,
+      ]),
+    ).toEqual([
+      [true, 999],
+      [true, 999],
+      [true, 0],
+    ]);
+    expect(mocks.load.mock.calls[2]?.[1]).not.toHaveProperty("spec_draft_model");
+  });
+
+  it("stops draft fallback immediately on cancellation", async () => {
+    const { translate } = await import("./engine");
+    const controller = new AbortController();
+    mocks.load.mockImplementationOnce(async () => {
+      controller.abort();
+      throw controller.signal.reason;
+    });
+    await expect(
+      translate("spec abort", "ja", "2b-speculative", { ...options(), signal: controller.signal }),
+    ).rejects.toMatchObject({ name: "AbortError" });
+    expect(mocks.load).toHaveBeenCalledOnce();
+    expect(mocks.complete).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [true, 4],
+    [false, 8],
+  ] as const)("caps threads for GPU availability %s", async (gpu, threads) => {
+    const { translate } = await import("./engine");
+    vi.stubGlobal("navigator", { hardwareConcurrency: 32, gpu: { requestAdapter: mocks.gpu } });
+    mocks.gpu.mockResolvedValue(gpu ? {} : null);
+    await translate("threads", "ja", "0.8b", options());
+    expect(mocks.load.mock.calls[0]?.[1].n_threads).toBe(threads);
+  });
+
   it("escapes user special tokens and requests easy Japanese with context and polite form", async () => {
     const { translate } = await import("./engine");
     const opts = options();
@@ -408,9 +537,12 @@ it("starts one cold GPU chunk, then drains whole two-chunk waves before switchin
   expect(peak).toBe(2);
 });
 
-it("keeps CPU inference serial with its original context budget", async () => {
+it.each([
+  [false, "2b"],
+  [true, "2b-speculative"],
+] as const)("keeps %s GPU / %s inference serial within one context budget", async (gpu, model) => {
   const { translate } = await import("./engine");
-  mocks.gpu.mockResolvedValue(null);
+  mocks.gpu.mockResolvedValue(gpu ? {} : null);
   const finish: (() => void)[] = [];
   mocks.complete.mockImplementation(async (params: CompletionOptions) => {
     await new Promise<void>((resolve) => {
@@ -418,12 +550,17 @@ it("keeps CPU inference serial with its original context budget", async () => {
     });
     params.onData(chunk("完了"));
   });
-  const first = translate("first cpu", "ja", "2b", options());
-  const second = translate("second cpu", "ja", "2b", options());
+  const first = translate("first serial", "ja", model, options());
+  const second = translate("second serial", "ja", model, options());
   await vi.waitFor(() => expect(finish).toHaveLength(1));
   expect(mocks.load).toHaveBeenCalledWith(
     expect.any(String),
-    expect.objectContaining({ n_parallel: 1, n_ctx: 4096, n_gpu_layers: 0, swa_full: true }),
+    expect.objectContaining({
+      n_parallel: 1,
+      n_ctx: 4096,
+      n_gpu_layers: gpu ? 999 : 0,
+      swa_full: true,
+    }),
   );
   finish[0]?.();
   await vi.waitFor(() => expect(finish).toHaveLength(2));
@@ -507,6 +644,33 @@ it("shares inference and replays progress and partial text to a late subscriber"
   expect(firstOptions.onText.mock.calls).toEqual(secondOptions.onText.mock.calls);
   expect(mocks.complete).toHaveBeenCalledOnce();
   expect(mocks.load).toHaveBeenCalledOnce();
+});
+
+it("ranks shared queued work by the nearest subscriber's current viewport distance", async () => {
+  const { translate } = await import("./engine");
+  mocks.gpu.mockResolvedValue(null);
+  const started = deferred();
+  const finish = deferred();
+  mocks.complete.mockImplementationOnce(async (params: CompletionOptions) => {
+    started.resolve();
+    await finish.promise;
+    params.onData(chunk("先頭"));
+  });
+  const blocker = translate("blocker", "ja", "2b", options());
+  await started.promise;
+  let distance = 100;
+  const shared = translate("shared", "ja", "2b", { ...options(), viewportDistance: () => 500 });
+  const other = translate("other", "ja", "2b", { ...options(), viewportDistance: () => 20 });
+  const subscriber = translate("shared", "ja", "2b", {
+    ...options(),
+    viewportDistance: () => distance,
+  });
+  distance = 0;
+  finish.resolve();
+  await Promise.all([blocker, shared, other, subscriber]);
+  expect(mocks.complete).toHaveBeenCalledTimes(3);
+  expect(mocks.complete.mock.calls[1]?.[0].prompt).toContain("shared");
+  expect(mocks.complete.mock.calls[2]?.[0].prompt).toContain("other");
 });
 
 it("keeps a shared inference running when one subscriber cancels", async () => {

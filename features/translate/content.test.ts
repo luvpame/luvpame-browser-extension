@@ -1,9 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { createTranslationController, splitTranslationText } from "./content";
-import { CANCEL_TRANSLATION, TRANSLATE, isTranslationRequest } from "./shared";
+import {
+  CANCEL_TRANSLATION,
+  CANCEL_TRANSLATION_REQUEST,
+  REPRIORITIZE_TRANSLATIONS,
+  TRANSLATE,
+  TRANSLATE_BATCH,
+  isTranslationRequest,
+  isTranslationBatchRequest,
+} from "./shared";
 import { scheduleTranslation } from "./scheduler";
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
 const controllers: ReturnType<typeof createTranslationController>[] = [];
 const output = () =>
   Array.from(document.querySelectorAll("[data-luvpame-translation]")).map(
@@ -924,6 +932,7 @@ it("keeps completed chunks while streaming the current one and ignores old reque
   await tick();
   const second = requests[1]!;
   controller.progress(second.sessionId, second.requestId, { kind: "text", text: "後半の途中" });
+  await tick();
   expect(output()).toEqual(["確定した前半\n後半の途中"]);
   controller.progress(first.sessionId, first.requestId, { kind: "text", text: "古い前半" });
   expect(output()).toEqual(["確定した前半\n後半の途中"]);
@@ -1061,4 +1070,187 @@ describe.each(["below", "replace"] as const)("表示方式 %s と翻訳先", (mo
       "やさしい訳",
     );
   });
+});
+
+it("keeps the first paragraph and headings separate while batching plain short labels", async () => {
+  document.body.innerHTML =
+    "<article><h1>Article heading</h1><p>Version 3</p><p>Saved settings</p><p>Next action</p></article>";
+  const send = vi.fn(async (message: unknown) => {
+    if (isTranslationBatchRequest(message))
+      return { ok: true, texts: ["バージョン3", "設定済み", "次へ"], device: "gpu" };
+    return success("見出し");
+  });
+  const controller = mount(send);
+  controller.toggle();
+  await tick();
+  expect(send.mock.calls.map(([message]) => message)).toEqual([
+    expect.objectContaining({ type: TRANSLATE, text: "Article heading" }),
+    expect.objectContaining({
+      type: TRANSLATE_BATCH,
+      texts: ["Version 3", "Saved settings", "Next action"],
+    }),
+  ]);
+  expect(output()).toEqual(["見出し", "バージョン3", "設定済み", "次へ"]);
+});
+
+it("keeps link fragments out of short-label batches in replacement mode", async () => {
+  document.body.innerHTML =
+    '<article><h1>Article heading</h1><p>Read <a href="/guide">this guide</a> today</p></article>';
+  const send = vi.fn(async (_message: unknown) => success());
+  mount(send).toggle("replace");
+  await tick();
+  expect(send.mock.calls.some(([message]) => isTranslationBatchRequest(message))).toBe(false);
+  expect(document.querySelector("a")?.getAttribute("href")).toBe("/guide");
+});
+
+it("commits only live batch members after one label disappears", async () => {
+  document.body.innerHTML =
+    "<article><h1>Article heading</h1><p>Alpha</p><p>Beta</p><p>Gamma</p></article>";
+  let finish: (result: unknown) => void = () => {};
+  let batchId = "";
+  const send = vi.fn((message: unknown) => {
+    if (isTranslationBatchRequest(message)) {
+      batchId = message.requestId;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    }
+    return Promise.resolve(success("見出し"));
+  });
+  mount(send).toggle();
+  document.querySelector("p")!.remove();
+  await tick();
+  expect(
+    send.mock.calls.some(
+      ([message]) =>
+        typeof message === "object" &&
+        message !== null &&
+        "type" in message &&
+        message.type === CANCEL_TRANSLATION_REQUEST &&
+        "requestId" in message &&
+        message.requestId === batchId,
+    ),
+  ).toBe(false);
+  finish({ ok: true, texts: ["アルファ", "ベータ", "ガンマ"], device: "gpu" });
+  await tick();
+  expect(output()).toEqual(["見出し", "ベータ", "ガンマ"]);
+});
+
+it("applies matching append offsets and commits the final full text without waiting for a frame", async () => {
+  document.body.innerHTML = "<p>Original source.</p>";
+  let request: { sessionId: string; requestId: string } | undefined;
+  let finish: (result: unknown) => void = () => {};
+  const controller = mount((message) => {
+    if (!isTranslationRequest(message)) return Promise.resolve(undefined);
+    request = message;
+    return new Promise((resolve) => {
+      finish = resolve;
+    });
+  });
+  controller.toggle();
+  if (!request) throw new Error("Request missing");
+  controller.progress(request.sessionId, request.requestId, { kind: "text", text: "前" });
+  controller.progress(request.sessionId, request.requestId, {
+    kind: "append",
+    offset: 1,
+    text: "半",
+  });
+  controller.progress(request.sessionId, request.requestId, {
+    kind: "append",
+    offset: 99,
+    text: "不正",
+  });
+  await tick();
+  expect(output()).toEqual(["前半"]);
+  controller.progress(request.sessionId, request.requestId, {
+    kind: "append",
+    offset: 2,
+    text: "途中",
+  });
+  finish(success("確定した全文"));
+  await tick();
+  expect(output()).toEqual(["確定した全文"]);
+});
+
+it("reprioritizes submitted requests after scrolling and cancels only removed source", async () => {
+  document.body.innerHTML = "<p>First source.</p><p>Second source.</p>";
+  const elements = [...document.querySelectorAll("p")];
+  const tops = [0, 2000];
+  elements.forEach((element, index) =>
+    vi
+      .spyOn(element, "getBoundingClientRect")
+      .mockImplementation(() => new DOMRect(0, tops[index], 300, 20)),
+  );
+  const pending = new Map<string, { text: string; finish: (result: unknown) => void }>();
+  const messages: unknown[] = [];
+  const controller = mount((message) => {
+    messages.push(message);
+    if (!isTranslationRequest(message)) return Promise.resolve({ ok: true });
+    return new Promise((finish) => pending.set(message.requestId, { text: message.text, finish }));
+  });
+  controller.toggle();
+  const first = [...pending].find(([, value]) => value.text === "First source.")!;
+  const second = [...pending].find(([, value]) => value.text === "Second source.")!;
+  tops[0] = 2000;
+  tops[1] = 0;
+  window.dispatchEvent(new Event("scroll"));
+  await tick();
+  expect(messages).toContainEqual(
+    expect.objectContaining({
+      type: REPRIORITIZE_TRANSLATIONS,
+      updates: expect.arrayContaining([
+        expect.objectContaining({ requestId: second[0], distance: 0 }),
+      ]),
+    }),
+  );
+  elements[0]!.remove();
+  await tick();
+  expect(messages).toContainEqual(
+    expect.objectContaining({ type: CANCEL_TRANSLATION_REQUEST, requestId: first[0] }),
+  );
+  expect(messages).not.toContainEqual(
+    expect.objectContaining({ type: CANCEL_TRANSLATION_REQUEST, requestId: second[0] }),
+  );
+  for (const value of pending.values()) value.finish(success("完了"));
+  await tick();
+  expect(output()).toEqual(["完了"]);
+});
+
+it("translates added hidden-tab source and cancels stale work without waiting for animation frames", async () => {
+  vi.spyOn(document, "hidden", "get").mockReturnValue(true);
+  const frame = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
+  document.body.innerHTML = "<article><p>Original source.</p></article>";
+  let staleId = "";
+  let finishStale: (result: unknown) => void = () => {};
+  const messages: unknown[] = [];
+  mount((message) => {
+    messages.push(message);
+    if (isTranslationRequest(message) && message.text === "Added source.") {
+      staleId = message.requestId;
+      return new Promise((resolve) => {
+        finishStale = resolve;
+      });
+    }
+    if (
+      typeof message === "object" &&
+      message !== null &&
+      "type" in message &&
+      message.type === CANCEL_TRANSLATION_REQUEST
+    )
+      finishStale({ ok: false, error: "Cancelled" });
+    return Promise.resolve(success("新しい訳"));
+  }).toggle();
+  await tick();
+  const added = document.createElement("p");
+  added.textContent = "Added source.";
+  document.querySelector("article")!.append(added);
+  await tick();
+  expect(staleId).not.toBe("");
+  added.textContent = "Changed source.";
+  await tick();
+  expect(messages).toContainEqual(
+    expect.objectContaining({ type: CANCEL_TRANSLATION_REQUEST, requestId: staleId }),
+  );
+  expect(output()).toEqual(["新しい訳", "新しい訳"]);
+  expect(frame).not.toHaveBeenCalled();
 });

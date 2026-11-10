@@ -29,8 +29,19 @@ const api = vi.hoisted(() => {
 vi.mock("wxt/browser", () => ({ browser: api }));
 vi.mock("../../lib/offscreen", () => ({ ensureOffscreen: vi.fn(async () => {}) }));
 import { registerTranslationBackground } from "./background";
+import { ensureOffscreen } from "../../lib/offscreen";
 import {
+  PREPARE_TRANSLATION,
+  OFFSCREEN_PREPARE_TRANSLATION,
   TRANSLATE,
+  TRANSLATE_BATCH,
+  OFFSCREEN_TRANSLATE_BATCH,
+  CANCEL_TRANSLATION_REQUEST,
+  OFFSCREEN_CANCEL_REQUEST,
+  REPRIORITIZE_TRANSLATIONS,
+  OFFSCREEN_REPRIORITIZE,
+  isTranslationBatchRequest,
+  isTranslationUpdate,
   CANCEL_TRANSLATION,
   OFFSCREEN_TRANSLATE,
   isTranslationRequest,
@@ -483,4 +494,224 @@ it("passes the explicit Ollama provider through the same offscreen path", async 
       provider: { kind: "ollama", model: "plamo-local:test" },
     }),
   );
+});
+
+it("validates bounded page batches, distances and append offsets at the boundary", () => {
+  const batch = { ...request, type: TRANSLATE_BATCH, texts: ["One", "Two"] };
+  expect(isTranslationBatchRequest(batch)).toBe(true);
+  for (const invalid of [
+    { ...batch, texts: ["One"] },
+    { ...batch, texts: Array(9).fill("One") },
+    { ...batch, texts: ["", "Two"] },
+    { ...batch, texts: ["x".repeat(161), "Two"] },
+    { ...batch, texts: Array(5).fill("x".repeat(160)) },
+    { ...batch, priority: "selection" },
+    { ...batch, viewportDistance: Infinity },
+  ])
+    expect(isTranslationBatchRequest(invalid)).toBe(false);
+  for (const distance of [-1, NaN, Infinity, 10_000_001])
+    expect(isTranslationRequest({ ...request, viewportDistance: distance })).toBe(false);
+  expect(isTranslationRequest({ ...request, viewportDistance: 0 })).toBe(true);
+  expect(isTranslationUpdate({ kind: "append", offset: 2, text: "続き" })).toBe(true);
+  for (const offset of [-1, 0.5, NaN, Infinity, "2"])
+    expect(isTranslationUpdate({ kind: "append", offset, text: "続き" })).toBe(false);
+});
+
+it.each([{ texts: ["一", "二"] }, { texts: ["一"] }, { texts: ["一", ""] }])(
+  "validates the number and content of batch results: $texts",
+  async ({ texts }) => {
+    api.runtime.sendMessage.mockImplementation(async (message) => ({
+      requestId: message.requestId,
+      ok: true,
+      texts,
+      device: "gpu",
+    }));
+    registerTranslationBackground();
+    const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+    const result = await new Promise((resolve) =>
+      listener({ ...request, type: TRANSLATE_BATCH, texts: ["One", "Two"] }, sender, resolve),
+    );
+    expect(result).toMatchObject({ ok: texts.length === 2 && texts.every(Boolean) });
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: OFFSCREEN_TRANSLATE_BATCH,
+        sessionId: "tab-7:session-1",
+        texts: ["One", "Two"],
+      }),
+    );
+  },
+);
+
+it("keeps reprioritization while offscreen initialization is pending and isolates tabs and sessions", async () => {
+  let ready: () => void = () => {};
+  vi.mocked(ensureOffscreen).mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        ready = resolve;
+      }),
+  );
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  const respond = vi.fn();
+  listener({ ...request, viewportDistance: 900 }, sender, respond);
+  await vi.waitFor(() => expect(ensureOffscreen).toHaveBeenCalledOnce());
+  const reprioritize = {
+    type: REPRIORITIZE_TRANSLATIONS,
+    sessionId: request.sessionId,
+    updates: [{ requestId: request.requestId, distance: 10 }],
+  };
+  listener(reprioritize, sender, vi.fn());
+  listener(
+    { ...reprioritize, updates: [{ requestId: request.requestId, distance: 999 }] },
+    { ...sender, tab: { id: 8 } },
+    vi.fn(),
+  );
+  listener({ ...reprioritize, sessionId: "other" }, sender, vi.fn());
+  expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+  ready();
+  await vi.waitFor(() => expect(respond).toHaveBeenCalled());
+  expect(api.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ viewportDistance: 10 }),
+  );
+});
+
+it("cancels and reprioritizes only the matching tab, session and request", async () => {
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  const pending = new Map<string, (value: unknown) => void>();
+  api.runtime.sendMessage.mockImplementation((message) => {
+    if (message.type !== OFFSCREEN_TRANSLATE) return Promise.resolve({ ok: true });
+    return new Promise((resolve) =>
+      pending.set(`${message.sessionId}:${message.requestId}`, resolve),
+    );
+  });
+  const first = vi.fn();
+  const second = vi.fn();
+  const third = vi.fn();
+  listener(request, sender, first);
+  listener(request, { ...sender, tab: { id: 8 } }, second);
+  listener({ ...request, sessionId: "other" }, sender, third);
+  await vi.waitFor(() => expect(pending.size).toBe(3));
+  listener(
+    {
+      type: REPRIORITIZE_TRANSLATIONS,
+      sessionId: request.sessionId,
+      updates: [
+        { requestId: request.requestId, distance: 20 },
+        { requestId: "missing", distance: 0 },
+      ],
+    },
+    sender,
+    vi.fn(),
+  );
+  expect(api.runtime.sendMessage).toHaveBeenLastCalledWith({
+    type: OFFSCREEN_REPRIORITIZE,
+    sessionId: "tab-7:session-1",
+    updates: [{ requestId: request.requestId, distance: 20 }],
+  });
+  listener(
+    {
+      type: CANCEL_TRANSLATION_REQUEST,
+      sessionId: request.sessionId,
+      requestId: request.requestId,
+    },
+    sender,
+    vi.fn(),
+  );
+  expect(api.runtime.sendMessage).toHaveBeenLastCalledWith({
+    type: OFFSCREEN_CANCEL_REQUEST,
+    sessionId: "tab-7:session-1",
+    requestId: request.requestId,
+  });
+  for (const finish of pending.values())
+    finish({ requestId: request.requestId, ok: true, text: "訳", device: "cpu" });
+  await vi.waitFor(() => {
+    expect(first).toHaveBeenCalledWith({ ok: false, error: "翻訳を停止しました。" });
+    expect(second).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+    expect(third).toHaveBeenCalledWith(expect.objectContaining({ ok: true }));
+  });
+});
+
+it.each([false, true])(
+  "prepares the persisted browser model after an extension-page request (tab: %s)",
+  async (inTab) => {
+    api.storage.local.get.mockResolvedValue({ translationModel: "2b" });
+    api.runtime.sendMessage.mockResolvedValue({ ok: true, device: "gpu" });
+    registerTranslationBackground();
+    const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+    expect(ensureOffscreen).not.toHaveBeenCalled();
+    const result = await new Promise((resolve) =>
+      listener(
+        { type: PREPARE_TRANSLATION, model: "2b" },
+        {
+          id: "test-extension",
+          url: api.runtime.getURL("/options.html"),
+          ...(inTab ? { tab: { id: 77 } } : {}),
+        },
+        resolve,
+      ),
+    );
+    expect(result).toEqual({ ok: true, device: "gpu" });
+    expect(api.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith({
+      type: OFFSCREEN_PREPARE_TRANSLATION,
+      provider: { kind: "browser", model: "2b" },
+    });
+  },
+);
+
+it.each([
+  { settings: { translationEnabled: false }, error: "翻訳機能はOFF" },
+  { settings: { translationBackend: "ollama" }, error: "ブラウザ内翻訳" },
+])(
+  "rejects model preparation for unavailable browser translation: $settings",
+  async ({ settings, error }) => {
+    api.storage.local.get.mockResolvedValue(settings);
+    registerTranslationBackground();
+    const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+    const result = await new Promise((resolve) =>
+      listener(
+        { type: PREPARE_TRANSLATION, model: "0.8b" },
+        { id: "test-extension", url: api.runtime.getURL("/options.html") },
+        resolve,
+      ),
+    );
+    expect(result).toEqual({ ok: false, error: expect.stringContaining(error) });
+    expect(ensureOffscreen).not.toHaveBeenCalled();
+    expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+  },
+);
+
+it("ignores model preparation from content scripts, foreign extensions and non-extension URLs", () => {
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  const respond = vi.fn();
+  for (const invalidSender of [
+    sender,
+    { id: "other-extension", url: api.runtime.getURL("/options.html") },
+    { id: "test-extension", url: "https://example.com" },
+    { id: "test-extension" },
+  ])
+    expect(
+      listener({ type: PREPARE_TRANSLATION, model: "0.8b" }, invalidSender, respond),
+    ).toBeUndefined();
+  expect(respond).not.toHaveBeenCalled();
+  expect(ensureOffscreen).not.toHaveBeenCalled();
+});
+
+it("rejects invalid or changed model selections before preparing any model", async () => {
+  api.storage.local.get.mockResolvedValue({ translationModel: "2b" });
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
+  const extensionPage = { id: "test-extension", url: api.runtime.getURL("/options.html") };
+  for (const model of [undefined, "other", "0.8b"]) {
+    const result = await new Promise((resolve) =>
+      listener({ type: PREPARE_TRANSLATION, model }, extensionPage, resolve),
+    );
+    expect(result).toEqual({
+      ok: false,
+      error: expect.stringContaining(model === "0.8b" ? "設定が変更されました" : "モデルが不正"),
+    });
+  }
+  expect(ensureOffscreen).not.toHaveBeenCalled();
+  expect(api.runtime.sendMessage).not.toHaveBeenCalled();
 });

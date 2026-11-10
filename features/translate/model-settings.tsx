@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { browser } from "wxt/browser";
 import { errorText } from "../../lib/copy-protocol";
 import {
   DEFAULT_OLLAMA_MODEL,
@@ -11,6 +12,9 @@ import {
 } from "./settings";
 import {
   isOllamaModel,
+  isTranslationModel,
+  isPrepareTranslationResult,
+  PREPARE_TRANSLATION,
   type TranslationMode,
   type TranslationModel,
   type TranslationProvider,
@@ -52,6 +56,24 @@ export function TranslationModelSettings() {
         setSavedOllamaModel(next.model);
       }
       setStatus("翻訳モデルを保存しました。次の翻訳から使用します。");
+    } catch (error) {
+      setStatus(errorText(error));
+    } finally {
+      setReady(true);
+    }
+  };
+  const prepare = async () => {
+    setReady(false);
+    setStatus("翻訳モデルを準備しています…");
+    try {
+      const result: unknown = await browser.runtime.sendMessage({
+        type: PREPARE_TRANSLATION,
+        model,
+      });
+      if (!isPrepareTranslationResult(result))
+        throw new Error("モデルを準備できませんでした。再試行してください。");
+      if (!result.ok) throw new Error(result.error);
+      setStatus("モデルの準備が完了しました。");
     } catch (error) {
       setStatus(errorText(error));
     } finally {
@@ -107,14 +129,23 @@ export function TranslationModelSettings() {
             disabled={!ready}
             onChange={(event) => {
               const value = event.target.value;
-              if (value === "0.8b" || value === "2b") void save({ kind: "browser", model: value });
+              if (isTranslationModel(value)) void save({ kind: "browser", model: value });
             }}
           >
             <option value="2b">PLaMo 3 Translate 2B（約1.81GB）</option>
+            <option value="2b-speculative">PLaMo 3 Translate 2B＋0.8B補助（実験）</option>
             <option value="0.8b">PLaMo 3 Translate 0.8B（約573MB）</option>
           </select>
+          <button type="button" disabled={!ready} onClick={() => void prepare()}>
+            モデルを準備
+          </button>
+          {model === "2b-speculative" && (
+            <p className="hint">
+              補助モデル約573MBも端末に保存し、メモリ使用量が増えます。高速化は実験段階です。補助モデルを使えない場合は通常の2Bで処理し、必要に応じてCPUに切り替えます。
+            </p>
+          )}
           <p className="hint">
-            初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合も、同じモデルをCPUで処理します。
+            準備時または初回の翻訳時にモデルをダウンロードし、この端末に保存します。翻訳する文章は外部に送信しません。WebGPUが使えない場合も、同じモデルをCPUで処理します。
           </p>
         </>
       ) : (

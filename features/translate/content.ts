@@ -2,8 +2,12 @@ import { browser } from "wxt/browser";
 import loadingCss from "./loading.css?inline";
 import {
   CANCEL_TRANSLATION,
+  CANCEL_TRANSLATION_REQUEST,
+  REPRIORITIZE_TRANSLATIONS,
   TRANSLATE,
+  TRANSLATE_BATCH,
   isTranslationResult,
+  isTranslationBatchResult,
   type TranslationPriority,
   type TranslationMode,
   type TargetLanguage,
@@ -106,10 +110,42 @@ export function createTranslationController({
   let selectionText = "";
   let selectionHost: HTMLElement | undefined;
   let selectionRect: DOMRect | undefined;
+  let firstPageRequest = true;
+  let renderFrame: number | undefined;
+  let positionFrame: number | undefined;
+  let refreshFrame: number | undefined;
+  const renders = new Map<Entry, { text: string; current: () => boolean }>();
+
+  const discardRender = (entry: Entry) => {
+    renders.delete(entry);
+    if (!renders.size && renderFrame !== undefined) {
+      win.cancelAnimationFrame?.(renderFrame);
+      renderFrame = undefined;
+    }
+  };
+  const viewportDistance = (element: Element) => {
+    const rect = element.getBoundingClientRect();
+    return Math.min(
+      1e7,
+      Math.max(
+        0,
+        -rect.bottom,
+        rect.top - win.innerHeight,
+        -rect.right,
+        rect.left - win.innerWidth,
+      ),
+    );
+  };
 
   const requests = new Map<
     string,
-    { sessionId: string; update: (value: TranslationUpdate) => void }
+    {
+      sessionId: string;
+      current: () => boolean;
+      distance: () => number;
+      lastDistance: number;
+      update: (value: TranslationUpdate) => void;
+    }
   >();
   const cancel = (id: string) => {
     if (id) void send({ type: CANCEL_TRANSLATION, sessionId: id }).catch(() => {});
@@ -121,6 +157,7 @@ export function createTranslationController({
     output: (text: string) => void,
     priority: TranslationPriority,
     target: TargetLanguage,
+    distance: () => number = () => 0,
   ) => {
     const chunks = splitTranslationText(text);
     const parts = chunks.map(() => ({ text: "", done: false }));
@@ -141,10 +178,16 @@ export function createTranslationController({
         const requestId = crypto.randomUUID();
         requests.set(requestId, {
           sessionId: id,
+          current,
+          distance,
+          lastDistance: distance(),
           update: (value) => {
             if (failed || !current()) return;
             if (value.kind === "text") {
               part.text = value.text;
+              publish();
+            } else if (value.kind === "append" && part.text.length === value.offset) {
+              part.text += value.text;
               publish();
             }
           },
@@ -157,6 +200,7 @@ export function createTranslationController({
             sessionId: id,
             requestId,
             priority,
+            viewportDistance: distance(),
           });
           if (failed || !current()) return;
           if (!isTranslationResult(result)) throw new Error("翻訳の応答を読み取れませんでした。");
@@ -221,6 +265,7 @@ export function createTranslationController({
         !entry.node.parentElement.closest(PAGE_EXCLUDED) &&
         entry.node.data === (entry.applied ?? entry.original);
   const restore = (entry: Entry) => {
+    discardRender(entry);
     if (entry.mode === "below") entry.host.remove();
     else {
       if (entry.node.data === entry.applied) entry.node.data = entry.original;
@@ -238,6 +283,81 @@ export function createTranslationController({
       entry.node.data = entry.applied;
     }
   };
+  const queueText = (entry: Entry, text: string, current: () => boolean) => {
+    const first = entry.mode === "below" ? !entry.output.textContent : entry.applied === undefined;
+    if (first || typeof win.requestAnimationFrame !== "function") {
+      showText(entry, text);
+      return;
+    }
+    renders.set(entry, { text, current });
+    renderFrame ??= win.requestAnimationFrame(() => {
+      renderFrame = undefined;
+      const updates = [...renders];
+      renders.clear();
+      for (const [pendingEntry, update] of updates)
+        if (update.current()) showText(pendingEntry, update.text);
+    });
+  };
+  const updatePositions = () => {
+    positionFrame = undefined;
+    const updates = new Map<string, { requestId: string; distance: number }[]>();
+    for (const [requestId, request] of requests) {
+      if (!request.current()) {
+        requests.delete(requestId);
+        void send({
+          type: CANCEL_TRANSLATION_REQUEST,
+          sessionId: request.sessionId,
+          requestId,
+        }).catch(() => {});
+        continue;
+      }
+      const distance = request.distance();
+      if (distance === request.lastDistance) continue;
+      request.lastDistance = distance;
+      const sessionUpdates = updates.get(request.sessionId) ?? [];
+      sessionUpdates.push({ requestId, distance });
+      updates.set(request.sessionId, sessionUpdates);
+    }
+    for (const [id, sessionUpdates] of updates)
+      void send({
+        type: REPRIORITIZE_TRANSLATIONS,
+        sessionId: id,
+        updates: sessionUpdates.slice(0, 64),
+      }).catch(() => {});
+  };
+  const currentEntry = (key: Element | Text, entry: Entry, epoch: number) =>
+    !!active &&
+    epoch === generation &&
+    key.isConnected &&
+    entries.get(key) === entry &&
+    unchanged(entry);
+  const failEntry = (entry: Entry, error: unknown) => {
+    discardRender(entry);
+    const message = error instanceof Error ? error.message : "翻訳に失敗しました。";
+    if (entry.mode === "below") entry.output.textContent = message;
+    else {
+      restore(entry);
+      entry.error = createOutput(entry.element);
+      entry.error.output.textContent = message;
+      placeOutput(entry.element, entry.error.host);
+    }
+  };
+  const finishEntry = (entry: Entry) => {
+    discardRender(entry);
+    entry.state = "done";
+    const output = entry.mode === "below" ? entry : entry.error;
+    output?.host.setAttribute("aria-busy", "false");
+  };
+  const batchLabel = (entry: Entry) =>
+    entry.text.length <= 120 &&
+    !/[\r\n]/.test(entry.text) &&
+    !/[.!?。！？]\s*$/.test(entry.text) &&
+    !entry.element.matches("h1,h2,h3,h4,h5,h6") &&
+    Array.from(entry.element.children).every((child) => child.hasAttribute(OWN)) &&
+    (entry.mode !== "replace" ||
+      Array.from(entry.element.childNodes).filter(
+        (node) => node instanceof win.Text && node.data.trim(),
+      ).length === 1);
   const pump = async () => {
     if (runningGeneration === generation || !active) return;
     const epoch = generation;
@@ -247,72 +367,121 @@ export function createTranslationController({
     const tasks = new Set<Promise<void>>();
     const processEntry = async (key: Element | Text, entry: Entry) => {
       entry.state = "running";
-      const current = () =>
-        !!active &&
-        epoch === generation &&
-        key.isConnected &&
-        entries.get(key) === entry &&
-        unchanged(entry);
+      const current = () => currentEntry(key, entry, epoch);
       try {
         const text = await translate(
           entry.text,
           id,
           current,
           (text) => {
-            showText(entry, text);
+            queueText(entry, text, current);
           },
           "page",
           target,
+          () => viewportDistance(entry.element),
         );
+        discardRender(entry);
         if (current() && text !== undefined) showText(entry, text);
       } catch (error) {
-        if (current()) {
-          const message = error instanceof Error ? error.message : "翻訳に失敗しました。";
-          if (entry.mode === "below") entry.output.textContent = message;
-          else {
-            restore(entry);
-            entry.error = createOutput(entry.element);
-            entry.error.output.textContent = message;
-            placeOutput(entry.element, entry.error.host);
-          }
-        }
+        if (current()) failEntry(entry, error);
       } finally {
-        entry.state = "done";
-        const output = entry.mode === "below" ? entry : entry.error;
-        output?.host.setAttribute("aria-busy", "false");
+        finishEntry(entry);
+        updatePositions();
+      }
+    };
+    const processBatch = async (batch: [Element | Text, Entry][]) => {
+      const requestId = crypto.randomUUID();
+      for (const [, entry] of batch) entry.state = "running";
+      const current = () => batch.some(([key, entry]) => currentEntry(key, entry, epoch));
+      const distance = () =>
+        Math.min(
+          1e7,
+          ...batch
+            .filter(([key, entry]) => currentEntry(key, entry, epoch))
+            .map(([, entry]) => viewportDistance(entry.element)),
+        );
+      requests.set(requestId, {
+        sessionId: id,
+        current,
+        distance,
+        lastDistance: distance(),
+        update: () => {},
+      });
+      try {
+        const result = await send({
+          type: TRANSLATE_BATCH,
+          texts: batch.map(([, entry]) => entry.text),
+          target,
+          sessionId: id,
+          requestId,
+          priority: "page",
+          viewportDistance: distance(),
+        });
+        if (!current()) return;
+        if (!isTranslationBatchResult(result))
+          throw new Error("翻訳の応答を読み取れませんでした。");
+        if (!result.ok) throw new Error(result.error);
+        if (result.texts.length !== batch.length)
+          throw new Error("翻訳結果の件数が一致しませんでした。");
+        batch.forEach(([key, entry], index) => {
+          if (currentEntry(key, entry, epoch)) showText(entry, result.texts[index]!);
+        });
+      } catch (error) {
+        for (const [key, entry] of batch)
+          if (currentEntry(key, entry, epoch)) failEntry(entry, error);
+      } finally {
+        requests.delete(requestId);
+        for (const [, entry] of batch) finishEntry(entry);
+        updatePositions();
       }
     };
     try {
       while (active && epoch === generation) {
         // 応答待ちで次の波が欠けないよう、実行2件に加えて次の2件を先読みする。
         while (tasks.size < 4) {
-          const next = Array.from(entries)
+          const ordered = Array.from(entries)
             .filter(([, entry]) => entry.state === "queued")
-            .sort(([, a], [, b]) => {
-              const distance = (element: Element) => {
-                const rect = element.getBoundingClientRect();
-                return Math.max(
-                  0,
-                  -rect.bottom,
-                  rect.top - win.innerHeight,
-                  -rect.right,
-                  rect.left - win.innerWidth,
-                );
-              };
+            .map(([key, entry]) => ({ key, entry, distance: viewportDistance(entry.element) }))
+            .sort((a, b) => {
               return (
-                distance(a.element) - distance(b.element) ||
-                (a.element === b.element
+                a.distance - b.distance ||
+                (a.entry.element === b.entry.element
                   ? 0
-                  : a.element.compareDocumentPosition(b.element) &
+                  : a.entry.element.compareDocumentPosition(b.entry.element) &
                       win.Node.DOCUMENT_POSITION_FOLLOWING
                     ? -1
                     : 1)
               );
-            })[0];
+            });
+          const next = ordered[0];
           if (!next) break;
-          const [element, entry] = next;
+          const { key: element, entry } = next;
+          const batch: [Element | Text, Entry][] = [[element, entry]];
+          if (!firstPageRequest && batchLabel(entry)) {
+            let characters = entry.text.length;
+            let tokens = Math.ceil(entry.text.length / 4) + 8;
+            for (const candidate of ordered.slice(1)) {
+              const text = candidate.entry.text;
+              const estimate = Math.ceil(text.length / 4) + 8;
+              if (batch.length === 8) break;
+              if (
+                candidate.entry.mode !== entry.mode ||
+                !batchLabel(candidate.entry) ||
+                (candidate.distance === 0) !== (next.distance === 0) ||
+                Math.floor(candidate.distance / Math.max(1, win.innerHeight)) !==
+                  Math.floor(next.distance / Math.max(1, win.innerHeight)) ||
+                characters + text.length > 640 ||
+                tokens + estimate > 160
+              )
+                continue;
+              batch.push([candidate.key, candidate.entry]);
+              characters += text.length;
+              tokens += estimate;
+            }
+          }
+          firstPageRequest = false;
 
-          const task = processEntry(element, entry);
+          const task = batch.length > 1 ? processBatch(batch) : processEntry(element, entry);
           tasks.add(task);
           void task.finally(() => tasks.delete(task));
         }
@@ -377,9 +546,17 @@ export function createTranslationController({
         });
       }
     }
+    updatePositions();
     void pump();
   };
-  const observer = new win.MutationObserver(refresh);
+  const observer = new win.MutationObserver(() => {
+    if (doc.hidden || typeof win.requestAnimationFrame !== "function") refresh();
+    else
+      refreshFrame ??= win.requestAnimationFrame(() => {
+        refreshFrame = undefined;
+        refresh();
+      });
+  });
   const closeSelection = () => {
     cancel(selectionSession);
     selectionSession = "";
@@ -540,6 +717,11 @@ export function createTranslationController({
     cancel(sessionId);
     sessionId = "";
     observer.disconnect();
+    firstPageRequest = true;
+    if (positionFrame !== undefined) win.cancelAnimationFrame?.(positionFrame);
+    if (refreshFrame !== undefined) win.cancelAnimationFrame?.(refreshFrame);
+    positionFrame = undefined;
+    refreshFrame = undefined;
     entries.forEach(restore);
     entries.clear();
     closeSelection();
@@ -550,10 +732,23 @@ export function createTranslationController({
       event.preventDefault();
     }
   };
+  const onViewportChange = () => {
+    closeSelection();
+    if (!active || !requests.size || positionFrame !== undefined) return;
+    if (typeof win.requestAnimationFrame !== "function") updatePositions();
+    else positionFrame = win.requestAnimationFrame(updatePositions);
+  };
+  const onVisibilityChange = () => {
+    if (!doc.hidden || refreshFrame === undefined) return;
+    win.cancelAnimationFrame?.(refreshFrame);
+    refreshFrame = undefined;
+    refresh();
+  };
   doc.addEventListener("selectionchange", onSelection);
   doc.addEventListener("keydown", onKey);
-  win.addEventListener("scroll", closeSelection, true);
-  win.addEventListener("resize", closeSelection);
+  doc.addEventListener("visibilitychange", onVisibilityChange);
+  win.addEventListener("scroll", onViewportChange, true);
+  win.addEventListener("resize", onViewportChange);
   return {
     setEnabled(value: boolean) {
       enabled = value;
@@ -594,8 +789,9 @@ export function createTranslationController({
       reset();
       doc.removeEventListener("selectionchange", onSelection);
       doc.removeEventListener("keydown", onKey);
-      win.removeEventListener("scroll", closeSelection, true);
-      win.removeEventListener("resize", closeSelection);
+      doc.removeEventListener("visibilitychange", onVisibilityChange);
+      win.removeEventListener("scroll", onViewportChange, true);
+      win.removeEventListener("resize", onViewportChange);
     },
   };
 }

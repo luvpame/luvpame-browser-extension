@@ -29,6 +29,10 @@
     {
       "file": "0005-disable-prompt-cache.patch",
       "sha256": "4f0d96d6274dc4f3e89450c968aa9ebca980b2920da91726d53460363b3b5ae2"
+    },
+    {
+      "file": "0006-enable-draft-speculation.patch",
+      "sha256": "fab96525dfda3fbb0d09c689e2ece55b61cf2791756d99458d4bdd464bdafc2b"
     }
   ],
   "files": {
@@ -37,16 +41,16 @@
       "sha256": "1cdbb0231eeda4226d56756a6a98815a941b41445c7916dc9c154c0b737cacec"
     },
     "wllama.wasm": {
-      "bytes": 10253728,
-      "sha256": "550f5de81e552a8d57894c852a42a54d6b0e38a88b171c5ae0ff0e0dade669cd"
+      "bytes": 10253781,
+      "sha256": "ba8b1ed4e46eb1b534e8bd65e9dfdf7fa506b8594840f5e8a3d0b558e68cc9f6"
     },
     "wllama-compat.js": {
       "bytes": 173601,
       "sha256": "f1a8a14147d106c77987e3342d89cb3f21f96aea189bb82373997e7931815ff4"
     },
     "wllama-compat.wasm": {
-      "bytes": 18770127,
-      "sha256": "06f027087ab0034c030d8133a0083e2b34c916ee942a2bc9e4e9be083c8bbcec"
+      "bytes": 18770279,
+      "sha256": "2b39df4e89d4014414a97e69ee3da1b6a08590aaac635d3af1e9ec339e07b990"
     }
   }
 }

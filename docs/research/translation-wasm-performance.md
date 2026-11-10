@@ -1,5 +1,7 @@
 # 翻訳エンジンのWASM最適化
 
+追記。追加機能として投機的デコードを有効化する`0006-enable-draft-speculation.patch`を導入し、現在のビルドは4パッチとなった。以下は先行する3パッチ時点の最適化と測定記録である。[追加実装の記録](translation-additional-implementation.md)。
+
 2026-11-10。Sakuttoの最適化を、現在のwllama 3.13.0とllama.cppへ移植した。翻訳モデル、プロンプト、GPUの2枠と合計8192トークン、CPUの1枠と4096トークンは変更していない。
 
 ## 取り入れた変更

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Browser translation benchmark</title>
+  <style>
+    body {
+      font: 16px/1.65 system-ui;
+      max-width: 820px;
+      margin: 32px auto;
+      padding: 0 20px;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      background: white;
+      padding: 12px;
+      border-bottom: 1px solid #ddd;
+    }
+    button {
+      padding: 8px 14px;
+    }
+    pre {
+      white-space: pre-wrap;
+      max-height: 300px;
+      overflow: auto;
+    }
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+    .cards p {
+      padding: 12px;
+      background: #eee;
+    }
+  </style>
+  <header translate="no">
+    <button id="run">Run benchmark</button> <button id="release">Release GPU</button
+    ><strong id="state">Waiting for extension</strong>
+    <pre id="results"></pre>
+  </header>
+  <main>
+    <article id="fixture">
+      <p>
+        Local translation keeps the original article on your computer. The browser downloads a
+        language model once and uses it to translate the text on this page.
+      </p>
+      <p>Small changes can make everyday tools easier to use.</p>
+      <p>
+        A team of researchers compared several methods for translating technical documents. They
+        found that clear sentence boundaries helped readers understand the result, especially when
+        the source mixed short instructions with longer explanations.
+      </p>
+      <p>
+        The train leaves at eight tomorrow morning. Please arrive at the station ten minutes before
+        departure.
+      </p>
+      <p>
+        When a web page changes while translation is running, the software needs to keep track of
+        the original text. Otherwise a late response might replace content that the reader has
+        already edited or removed.
+      </p>
+      <p>Save your work before closing the window.</p>
+      <p>
+        Performance measurements should describe the work that actually happened. A fast result may
+        come from a cache, a smaller input, or a different device. Comparing the same article under
+        the same conditions makes the numbers easier to interpret.
+      </p>
+      <p>
+        The museum is open from Tuesday through Sunday. Admission is free for children under twelve.
+      </p>
+      <p>
+        Our community garden started with three wooden boxes behind the library. Today volunteers
+        grow vegetables, share seeds, and teach local families how to improve the soil without
+        expensive equipment. The project succeeds because everyone can contribute a little time.
+      </p>
+      <p>Click the blue button to continue.</p>
+      <p>
+        Modern graphics processors can perform many calculations at the same time. This makes them
+        useful for machine learning, but moving data and scheduling small tasks can still take
+        considerable time. Larger batches are helpful only when the workload and available memory
+        support them.
+      </p>
+      <p>
+        The report will be ready on Friday. We will send you a message as soon as it is available.
+      </p>
+      <section class="cards">
+        <p>Available now</p>
+        <p>Read the latest update</p>
+        <p>Your settings are saved</p>
+      </section>
+    </article>
+  </main>
+  <script src="/page.js"></script>
+</html>
