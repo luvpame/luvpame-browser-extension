@@ -13,11 +13,13 @@ describe("findReviewOpener", () => {
     expect(findReviewOpener(document)).not.toBeNull();
   });
 
-  it("finds the review action outside the pull request toolbar", () => {
-    document.body.innerHTML = `
+  it.each(["open", "cancel"])(
+    "finds the %s review action outside the pull request toolbar",
+    (action) => {
+      document.body.innerHTML = `
       <section><h2>Pull request toolbar</h2></section>
       <div>
-        <button data-component="Button" type="button" data-dd-action-name="pull_requests.review.open" data-variant="primary">
+        <button data-component="Button" type="button" data-dd-action-name="pull_requests.review.${action}" data-variant="primary">
           <span data-component="buttonContent">
             <span data-component="text"><span>Submit review</span><span>Review</span></span>
           </span>
@@ -25,11 +27,12 @@ describe("findReviewOpener", () => {
         </button>
       </div>`;
 
-    const button = document.querySelector<HTMLButtonElement>("button");
+      const button = document.querySelector<HTMLButtonElement>("button");
 
-    expect(button).not.toBeNull();
-    expect(findReviewOpener(document)).toBe(button);
-  });
+      expect(button).not.toBeNull();
+      expect(findReviewOpener(document)).toBe(button);
+    },
+  );
 
   it("does not treat a submit button with the review action as the opener", () => {
     document.body.innerHTML =
