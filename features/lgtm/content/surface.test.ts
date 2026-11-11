@@ -7,16 +7,19 @@ describe("findReviewControlsAnchor", () => {
     document.body.replaceChildren();
   });
 
-  it("finds the review surface on a base pull request URL", () => {
-    document.body.innerHTML = '<button type="button" aria-haspopup="dialog">Submit review</button>';
+  it.each(["Submit review", "Review changes", "Finish your review 1"])(
+    "finds the %s review surface on a base pull request URL",
+    (label) => {
+      document.body.innerHTML = `<button type="button" aria-haspopup="dialog">${label}</button>`;
 
-    const anchor = findReviewControlsAnchor(
-      document,
-      new URL("https://github.com/acme/widgets/pull/123"),
-    );
+      const anchor = findReviewControlsAnchor(
+        document,
+        new URL("https://github.com/acme/widgets/pull/123"),
+      );
 
-    expect(anchor).toBe(document.querySelector("button"));
-  });
+      expect(anchor).toBe(document.querySelector("button"));
+    },
+  );
 
   it("returns null on a non-pull-request URL", () => {
     document.body.innerHTML = '<button type="button" aria-haspopup="dialog">Submit review</button>';
