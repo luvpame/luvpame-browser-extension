@@ -117,17 +117,19 @@ function ReviewControls({ signal }: { signal: AbortSignal }): React.JSX.Element 
 
   return (
     <span className="fast-lgtm-controls">
-      <button
-        type="button"
-        className="btn btn-primary fast-lgtm-button"
-        disabled={state === "loading" || !isAvailable}
-        aria-disabled={state === "loading" || !isAvailable ? "true" : "false"}
-        aria-busy={state === "loading" ? "true" : "false"}
-        data-state={state}
-        onClick={handleButtonClick}
-      >
-        LGTM
-      </button>
+      {isAvailable ? (
+        <button
+          type="button"
+          className="btn btn-primary fast-lgtm-button"
+          disabled={state === "loading"}
+          aria-disabled={state === "loading" ? "true" : "false"}
+          aria-busy={state === "loading" ? "true" : "false"}
+          data-state={state}
+          onClick={handleButtonClick}
+        >
+          <span className="fast-lgtm-label">LGTM</span>
+        </button>
+      ) : null}
       {errorMessage
         ? createPortal(
             <div className="fast-lgtm-alert" role="alert">

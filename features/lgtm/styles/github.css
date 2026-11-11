@@ -43,8 +43,12 @@
 }
 
 .fast-lgtm-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   min-width: 3.5rem;
   height: 28px;
+  padding-block: 0;
   border: 1px solid var(--fast-lgtm-accent);
   border-radius: var(--fast-lgtm-radius);
   background: var(--fast-lgtm-accent);
@@ -54,6 +58,10 @@
   transition:
     background-color var(--fast-lgtm-duration) var(--fast-lgtm-ease-out),
     transform var(--fast-lgtm-duration) var(--fast-lgtm-ease-out);
+}
+
+.fast-lgtm-label {
+  text-box: trim-both cap alphabetic;
 }
 
 @media (hover: hover) and (pointer: fine) {

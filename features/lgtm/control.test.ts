@@ -54,13 +54,10 @@ describe("mountLgtm", () => {
     expect(opener?.nextElementSibling?.textContent).toBe("LGTM");
   });
 
-  it("keeps LGTM disabled and shows a dismissible body alert when approval is unavailable", async () => {
+  it("hides LGTM and shows a dismissible body alert when approval is unavailable", async () => {
     await prepareUnavailableApproval();
 
-    const button = document.querySelector<HTMLButtonElement>(".fast-lgtm-button");
-    expect(button?.textContent).toBe("LGTM");
-    expect(button?.disabled).toBe(true);
-    expect(button?.getAttribute("aria-disabled")).toBe("true");
+    expect(document.querySelector(".fast-lgtm-button")).toBeNull();
     const alert = document.querySelector('[role="alert"]');
     expect(alert?.parentElement).toBe(document.body);
     expect(alert?.textContent).toContain("Approve is not available for this pull request.");
@@ -69,7 +66,7 @@ describe("mountLgtm", () => {
       alert?.querySelector<HTMLButtonElement>('button[aria-label="Dismiss error"]')?.click();
     });
     expect(document.querySelector('[role="alert"]')).toBeNull();
-    expect(button?.isConnected).toBe(true);
+    expect(document.querySelector(".fast-lgtm-button")).toBeNull();
   });
 
   it("removes the body alert when the controls are disposed", async () => {
