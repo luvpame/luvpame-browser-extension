@@ -1,4 +1,5 @@
-[data-fast-lgtm-root] {
+[data-fast-lgtm-root],
+.fast-lgtm-alert {
   --fast-lgtm-paper: var(--bgColor-default, oklch(98% 0.004 145));
   --fast-lgtm-ink: var(--fgColor-default, oklch(22% 0.018 145));
   --fast-lgtm-accent: var(--button-primary-bgColor-rest, oklch(52% 0.17 145));
@@ -6,7 +7,7 @@
   --fast-lgtm-accent-ink: var(--button-primary-fgColor-rest, oklch(98% 0.008 145));
   --fast-lgtm-focus: var(--focus-outlineColor, oklch(58% 0.18 250));
   --fast-lgtm-error: var(--fgColor-danger, oklch(46% 0.18 28));
-  --fast-lgtm-error-ink: var(--button-danger-fgColor-rest, oklch(98% 0.008 28));
+  --fast-lgtm-error-ink: var(--fgColor-onEmphasis, oklch(98% 0.008 28));
   --fast-lgtm-success: var(--fgColor-success, oklch(45% 0.16 145));
   --fast-lgtm-spinner-track: color-mix(in oklch, var(--fast-lgtm-accent-ink) 35%, transparent);
   --fast-lgtm-shadow: var(--shadow-resting-small, 0 1px 3px oklch(20% 0.01 145 / 0.12));
@@ -24,12 +25,16 @@
   --fast-lgtm-duration: 120ms;
   --fast-lgtm-spinner-duration: 700ms;
   --fast-lgtm-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --fast-lgtm-z-alert: 100;
+  --fast-lgtm-z-alert: 2147483647;
+}
 
+[data-fast-lgtm-root] {
   display: inline-flex;
   position: relative;
   align-items: center;
-  margin-inline-end: var(--fast-lgtm-space-2);
+  flex-shrink: 0;
+  margin-inline-start: var(--fast-lgtm-space-2);
+  margin-inline-end: 0;
 }
 
 .fast-lgtm-controls {
@@ -39,7 +44,7 @@
 
 .fast-lgtm-button {
   min-width: 3.5rem;
-  min-height: 2rem;
+  height: 28px;
   border: 1px solid var(--fast-lgtm-accent);
   border-radius: var(--fast-lgtm-radius);
   background: var(--fast-lgtm-accent);
@@ -101,10 +106,14 @@
 }
 
 .fast-lgtm-alert {
-  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--fast-lgtm-space-2);
+  position: fixed;
+  inset: auto;
   z-index: var(--fast-lgtm-z-alert);
-  inset-block-start: calc(100% + var(--fast-lgtm-space-2));
-  inset-inline-end: 0;
+  inset-block-end: var(--fast-lgtm-space-3);
+  inset-inline-end: var(--fast-lgtm-space-3);
   width: min(20rem, calc(100vw - (var(--fast-lgtm-space-3) * 2)));
   padding: var(--fast-lgtm-space-2) var(--fast-lgtm-space-3);
   border: 1px solid var(--fast-lgtm-error);
@@ -112,8 +121,19 @@
   background: var(--fast-lgtm-paper);
   box-shadow: var(--fast-lgtm-shadow);
   color: var(--fast-lgtm-ink);
-  font: inherit;
+  font-family: var(--fast-lgtm-font);
+  font-size: 0.875rem;
   line-height: 1.4;
+}
+
+.fast-lgtm-alert-close {
+  flex-shrink: 0;
+  padding: 0 0.25rem;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
 }
 
 @keyframes fast-lgtm-spin {

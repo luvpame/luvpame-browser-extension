@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 
 import { prepareApprovalReview } from "./content/dom-adapter";
@@ -33,7 +34,7 @@ export function mountLgtm() {
 
     const container = document.createElement("span");
     container.setAttribute(ROOT_ATTRIBUTE, "");
-    anchor.before(container);
+    anchor.after(container);
 
     const lifetime = new AbortController();
     const root = createRoot(container);
@@ -116,24 +117,33 @@ function ReviewControls({ signal }: { signal: AbortSignal }): React.JSX.Element 
 
   return (
     <span className="fast-lgtm-controls">
-      {isAvailable ? (
-        <button
-          type="button"
-          className="btn btn-primary fast-lgtm-button"
-          disabled={state === "loading"}
-          aria-disabled={state === "loading" ? "true" : "false"}
-          aria-busy={state === "loading" ? "true" : "false"}
-          data-state={state}
-          onClick={handleButtonClick}
-        >
-          LGTM
-        </button>
-      ) : null}
-      {errorMessage ? (
-        <span className="fast-lgtm-alert" role="alert">
-          {errorMessage}
-        </span>
-      ) : null}
+      <button
+        type="button"
+        className="btn btn-primary fast-lgtm-button"
+        disabled={state === "loading" || !isAvailable}
+        aria-disabled={state === "loading" || !isAvailable ? "true" : "false"}
+        aria-busy={state === "loading" ? "true" : "false"}
+        data-state={state}
+        onClick={handleButtonClick}
+      >
+        LGTM
+      </button>
+      {errorMessage
+        ? createPortal(
+            <div className="fast-lgtm-alert" role="alert">
+              <span>{errorMessage}</span>
+              <button
+                type="button"
+                className="fast-lgtm-alert-close"
+                aria-label="Dismiss error"
+                onClick={() => setErrorMessage("")}
+              >
+                ×
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }
