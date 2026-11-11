@@ -13,6 +13,31 @@ describe("findReviewOpener", () => {
     expect(findReviewOpener(document)).not.toBeNull();
   });
 
+  it("finds the review action outside the pull request toolbar", () => {
+    document.body.innerHTML = `
+      <section><h2>Pull request toolbar</h2></section>
+      <div>
+        <button data-component="Button" type="button" data-dd-action-name="pull_requests.review.open" data-variant="primary">
+          <span data-component="buttonContent">
+            <span data-component="text"><span>Submit review</span><span>Review</span></span>
+          </span>
+          <span data-component="trailingAction"><svg></svg></span>
+        </button>
+      </div>`;
+
+    const button = document.querySelector<HTMLButtonElement>("button");
+
+    expect(button).not.toBeNull();
+    expect(findReviewOpener(document)).toBe(button);
+  });
+
+  it("does not treat a submit button with the review action as the opener", () => {
+    document.body.innerHTML =
+      '<button type="submit" data-dd-action-name="pull_requests.review.open">Submit review</button>';
+
+    expect(findReviewOpener(document)).toBeNull();
+  });
+
   it("finds the new Files changed toolbar review control without popup attributes", () => {
     document.body.innerHTML = `
       <section data-component="Stack">
