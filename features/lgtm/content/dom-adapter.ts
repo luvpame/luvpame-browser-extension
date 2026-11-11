@@ -18,6 +18,8 @@ export type ApprovalReviewResult =
     };
 
 const REVIEW_BUTTON_SELECTORS = [
+  'button[type="button"][data-dd-action-name="pull_requests.review.open"]',
+  'button[type="button"][data-dd-action-name="pull_requests.review.cancel"][data-variant="primary"]',
   '[data-testid="review-changes-button"]',
   "button.js-review-changes",
   ".js-review-changes",

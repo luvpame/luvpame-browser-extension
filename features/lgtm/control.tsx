@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { createRoot } from "react-dom/client";
 
 import { prepareApprovalReview } from "./content/dom-adapter";
@@ -33,7 +34,7 @@ export function mountLgtm() {
 
     const container = document.createElement("span");
     container.setAttribute(ROOT_ATTRIBUTE, "");
-    anchor.before(container);
+    anchor.after(container);
 
     const lifetime = new AbortController();
     const root = createRoot(container);
@@ -126,14 +127,25 @@ function ReviewControls({ signal }: { signal: AbortSignal }): React.JSX.Element 
           data-state={state}
           onClick={handleButtonClick}
         >
-          LGTM
+          <span className="fast-lgtm-label">LGTM</span>
         </button>
       ) : null}
-      {errorMessage ? (
-        <span className="fast-lgtm-alert" role="alert">
-          {errorMessage}
-        </span>
-      ) : null}
+      {errorMessage
+        ? createPortal(
+            <div className="fast-lgtm-alert" role="alert">
+              <span>{errorMessage}</span>
+              <button
+                type="button"
+                className="fast-lgtm-alert-close"
+                aria-label="Dismiss error"
+                onClick={() => setErrorMessage("")}
+              >
+                ×
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </span>
   );
 }

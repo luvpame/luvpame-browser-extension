@@ -70,6 +70,7 @@ export function createReviewSurfaceController({
         "aria-haspopup",
         "aria-label",
         "class",
+        "data-dd-action-name",
         "data-hotkey",
         "data-testid",
         "hidden",
