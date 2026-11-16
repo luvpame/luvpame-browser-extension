@@ -18,7 +18,7 @@ import {
 const OWN = "data-luvpame-translation";
 const EXCLUDED = `script,style,noscript,code,pre,input,textarea,select,button,svg,canvas,iframe,nav,footer,aside,[contenteditable]:not([contenteditable="false"]),[role="navigation"],[role="menu"],[role="textbox"],[role="banner"],[role="complementary"],[hidden],[aria-hidden="true"],[${OWN}]`;
 const PAGE_EXCLUDED = `${EXCLUDED},header,figure,label,.not-prose,.notranslate,.sr-only:not(.not-sr-only),.visually-hidden:not(.not-visually-hidden),.screen-reader-only,[translate="no"],[role="img"],[role="application"],[role="dialog"],[role="toolbar"]`;
-const BLOCKS = "p,h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div";
+const BLOCKS = 'p,[data-as="p"],h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div';
 const english = (text: string) => /[A-Za-z]{2,}/.test(text);
 const sourceText = (element: Element) => {
   if (!element.querySelector(PAGE_EXCLUDED)) return element.textContent?.trim() ?? "";

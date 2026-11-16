@@ -1125,6 +1125,46 @@ describe.each(["below", "replace"] as const)("長文の並列翻訳 %s", (mode) 
 });
 
 describe.each(["below", "replace"] as const)("表示方式 %s と翻訳先", (mode) => {
+  it("data-asで段落を表す本文を個別に翻訳し、強調要素を保って解除する", async () => {
+    document.body.innerHTML = `<main><div>
+      <span data-as="p"><strong>Autoapprover</strong> evaluates selected pull requests.</span>
+      <span data-as="p">Configure approval settings.</span>
+      <h2>注意事項</h2><ul><li>Review important changes.</li></ul>
+    </div></main>`;
+    const original = document.body.innerHTML;
+    const paragraphs = Array.from(document.querySelectorAll('[data-as="p"]'));
+    const strong = document.querySelector("strong");
+    const send = vi.fn(async (_message: unknown) => success());
+    const controller = mount(send);
+    controller.toggle(mode);
+    await tick();
+    expect(send.mock.calls.map(([message]) => message)).toEqual(
+      (mode === "below"
+        ? [
+            "Autoapprover evaluates selected pull requests.",
+            "Configure approval settings.",
+            "Review important changes.",
+          ]
+        : [
+            "Autoapprover",
+            "evaluates selected pull requests.",
+            "Configure approval settings.",
+            "Review important changes.",
+          ]
+      ).map((text) => expect.objectContaining({ type: TRANSLATE, text })),
+    );
+    expect(document.querySelector("strong")).toBe(strong);
+    expect(paragraphs.map((paragraph) => paragraph.textContent)).toEqual(
+      mode === "below"
+        ? ["Autoapprover evaluates selected pull requests.", "Configure approval settings."]
+        : ["日本語の訳 日本語の訳", "日本語の訳"],
+    );
+    expect(output()).toEqual(mode === "below" ? ["日本語の訳", "日本語の訳", "日本語の訳"] : []);
+    controller.toggle(mode);
+    expect(document.body.innerHTML).toBe(original);
+    expect(document.querySelector("strong")).toBe(strong);
+  });
+
   it.each(["ja", "ja-easy"] as const)(
     "%s を指定方式で表示し同じ組合せで解除する",
     async (target) => {
