@@ -44,7 +44,9 @@ export const registerTranslationBackground = (): void => {
     prewarming = prewarming
       .then(() => menuSync)
       .then(async () => {
-        if (revision !== prewarmRevision || !(await readFeatures()).translationEnabled) return;
+        if (revision !== prewarmRevision) return;
+        const features = await readFeatures();
+        if (!features.translationEnabled && !features.linearReviewGuideTranslationEnabled) return;
         const provider = await readTranslationSettings();
         if (provider.kind !== "browser") return;
         await ensureOffscreen();
@@ -77,7 +79,9 @@ export const registerTranslationBackground = (): void => {
       const model = message.model;
       void (async (): Promise<PrepareTranslationResult> => {
         try {
-          if (!(await readFeatures()).translationEnabled) throw new Error("翻訳機能はOFFです。");
+          const features = await readFeatures();
+          if (!features.translationEnabled && !features.linearReviewGuideTranslationEnabled)
+            throw new Error("翻訳機能はOFFです。");
           const provider = await readTranslationSettings();
           if (provider.kind !== "browser")
             throw new Error("モデルの準備はブラウザ内翻訳で利用できます。");
@@ -161,6 +165,7 @@ export const registerTranslationBackground = (): void => {
       return;
     }
     if (message.type !== TRANSLATE && message.type !== TRANSLATE_BATCH) return;
+    const feature = message.feature;
     if (!isTranslationRequest(message) && !isTranslationBatchRequest(message)) {
       respond({ ok: false, error: "翻訳する文章または翻訳先が不正です。" });
       return;
@@ -182,7 +187,20 @@ export const registerTranslationBackground = (): void => {
     sessions.set(key, route);
     void (async (): Promise<TranslationResult | TranslationBatchResult> => {
       try {
-        if (!(await readFeatures()).translationEnabled) throw new Error("翻訳機能はOFFです。");
+        const features = await readFeatures();
+        if (feature === "linear-review-guide") {
+          if (
+            !/^https:\/\/linear\.app\/[^/?#]+\/review\/[^/?#]+\/review\/?(?:[?#]|$)/.test(
+              sender.url ?? "",
+            )
+          )
+            throw new Error("Review Guideのページではありません。");
+          if (!features.linearReviewGuideTranslationEnabled)
+            throw new Error("Review Guide翻訳はOFFです。");
+        } else {
+          if (feature !== undefined) throw new Error("翻訳機能の指定が不正です。");
+          if (!features.translationEnabled) throw new Error("翻訳機能はOFFです。");
+        }
         const provider = await readTranslationSettings();
         await ensureOffscreen();
         if (route.cancelled) throw new Error("翻訳を停止しました。");
@@ -307,7 +325,12 @@ export const registerTranslationBackground = (): void => {
     if (area !== "local") return;
     if ("translationEnabled" in changes) syncMenus();
     if (
-      ["translationEnabled", "translationBackend", "translationModel"].some((key) => key in changes)
+      [
+        "translationEnabled",
+        "linearReviewGuideTranslationEnabled",
+        "translationBackend",
+        "translationModel",
+      ].some((key) => key in changes)
     )
       prewarm();
   });

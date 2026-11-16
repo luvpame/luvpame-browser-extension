@@ -65,12 +65,12 @@ function articleRoots(doc: Document): Element[] {
   return [doc.body];
 }
 
-function paragraphs(root: Element): Element[] {
-  return [root, ...root.querySelectorAll(BLOCKS)].filter(
+function paragraphs(root: Element, blocks = BLOCKS): Element[] {
+  return [root, ...root.querySelectorAll(blocks)].filter(
     (element) =>
-      element.matches(BLOCKS) &&
+      element.matches(blocks) &&
       !element.closest(PAGE_EXCLUDED) &&
-      !Array.from(element.querySelectorAll(BLOCKS)).some(
+      !Array.from(element.querySelectorAll(blocks)).some(
         (child) => !child.closest(PAGE_EXCLUDED),
       ) &&
       sourceText(element).length > 0,
@@ -98,7 +98,8 @@ type Entry = {
 export function createTranslationController({
   doc = document,
   send = (message) => browser.runtime.sendMessage(message),
-}: { doc?: Document; send?: Send } = {}) {
+  scope,
+}: { doc?: Document; send?: Send; scope?: { roots: string; blocks: string } } = {}) {
   const win = doc.defaultView;
   if (!win) throw new Error("ページが見つかりません。");
   let enabled = false;
@@ -501,7 +502,8 @@ export function createTranslationController({
   const refresh = () => {
     if (!active) return;
     const candidates = new Map<Element | Text, Element>();
-    for (const element of articleRoots(doc).flatMap(paragraphs)) {
+    const roots = scope ? Array.from(doc.querySelectorAll(scope.roots)) : articleRoots(doc);
+    for (const element of roots.flatMap((root) => paragraphs(root, scope?.blocks))) {
       if (active.mode === "below") {
         if (english(sourceText(element))) candidates.set(element, element);
       } else {
@@ -576,7 +578,7 @@ export function createTranslationController({
     selectionHost.style.top = `${Math.max(8, Math.min(top, win.innerHeight - height - 8))}px`;
   };
   const onSelection = (anchor?: { x: number; y: number }) => {
-    if (!enabled || selecting) return;
+    if (scope || !enabled || selecting) return;
     const selection = doc.getSelection();
     const text = selection?.toString().trim() ?? "";
     if (!text && selectionHost?.contains(doc.activeElement)) return;

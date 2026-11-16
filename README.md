@@ -1,6 +1,6 @@
 # Luvpame Browser Extension
 
-GitHub・Notionの編集補助、Markdownコピーをまとめた自分用のChrome MV3拡張です。
+GitHub・Notionの編集補助、Markdownコピー、翻訳をまとめた自分用のChrome MV3拡張です。LinearのReview Guide翻訳にも対応しています。
 
 ## インストール
 
@@ -18,7 +18,7 @@ URLコピーのショートカットはmacOSで `Command+Shift+Y`、その他で
 本文コピーはNotionの対応ページでは専用の変換、それ以外ではDefuddleで本文を抽出します。タイトルなどのメタデータは付けません。
 URLコピーはHTTP/HTTPS、汎用本文コピーはHTTP/HTTPSとファイルURLが対象です。ファイルURLでは拡張の詳細画面からアクセスを許可してください。
 
-popupと設定画面のどちらでも10機能を個別にON/OFFできます。初期値はすべてONで、開いているタブにも反映されます。
+popupと設定画面のどちらでも11機能を個別にON/OFFできます。初期値はすべてONで、開いているタブにも反映されます。
 
 | 対象         | 機能                                                         |
 | ------------ | ------------------------------------------------------------ |
@@ -26,10 +26,50 @@ popupと設定画面のどちらでも10機能を個別にON/OFFできます。�
 | GitHub       | LGTM、PRコピー、Devin Reviewリンク                           |
 | Notion       | ページ内本文コピーボタン、タイトルホバー操作、見出しマーカー |
 | Devin Review | マージボタン非表示                                           |
+| Linear       | Review Guideの説明文を自動翻訳                               |
 
 Notionのページ内ボタンをOFFにしても、共通メニューの本文コピーは利用できます。
 LGTMはApproveの選択と本文テンプレートの挿入までで、レビューを自動送信しません。既存のレビュー本文は置き換えます。
 Devin Reviewのマージボタン非表示はUI上の補助であり、マージの権限を制限するものではありません。
+
+### Linear Review Guide翻訳
+
+LinearのPRでGuideタブを開くと、英語の説明文だけを日本語に置き換えます。見出し、操作ボタン、コード差分は翻訳しません。後から追加された説明文や、アプリ内の画面遷移にも対応します。
+
+#### ブラウザ版
+
+1. popupまたは設定画面の「Linear: Review Guide翻訳」をONにします。初期値はONです。
+2. 翻訳設定で実行方法とモデルを選びます。既存のPLaMo翻訳と共用し、ブラウザ実行では初回にモデルを取得します。
+3. LinearのPRでGuideタブを開きます。ボタン操作なしで翻訳が始まり、機能をOFFにすると原文に戻ります。
+
+「PLaMo: ページ・選択翻訳」がOFFでも動作します。ページ翻訳の表示方式にかかわらず、Guideは置き換え表示です。
+
+#### デスクトップ版・macOS
+
+公式Linear.appを変更せず、Guide翻訳だけを使えます。PLaMo 3 Translate 0.8BをLinear内で実行し、GPUを優先します。GPUが使えない場合はCPUに切り替わります。翻訳する文章は外部へ送信しません。Chrome拡張の設定とは独立しています。
+
+初回はmacOS 15以降と[開発環境](#開発)を使い、リポジトリのルートで設定します。
+
+1. 実行ファイルとMac用補助アプリを生成し、モデルを取得して補助を配置します。モデルは約573MBです。既に同じモデルがある場合は、ダウンロードの代わりに `dist/linear-offline/model.gguf` へ配置します。
+
+   ```sh
+   bun run build:linear-auto-start
+   curl --fail --location --output dist/linear-offline/model.gguf 'https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf'
+   bun run linear:auto-start stage
+   ```
+
+2. `pbcopy < dist/linear-offline/setup.js` で初期設定コードをコピーします。LinearのPR画面で `Cmd+Option+I` を押し、DevToolsのConsoleへ貼り付けて実行します。下部バーのファイル選択で `dist/linear-offline/linear-offline.js` と `model.gguf` を選び、保存とモデル準備が終わるまで待ちます。実行ファイルとモデルはLinear内に保存され、次回から選択不要になります。
+3. `open "$HOME/Applications/Linear翻訳補助.app"` で補助を開き、システム設定 → プライバシーとセキュリティ → アクセシビリティで「Linear翻訳補助」を許可します。
+4. Linearを前面にして、Mac上部の補助メニューから「接続確認」を押します。「実行確認済み」になったら補助メニューで「終了」し、`bun run linear:auto-start enable` を実行します。ログイン時に補助が起動し、Linearの起動を待つ設定になります。
+5. Linearを完全終了・再起動し、前面にしたまま60秒ほど待ちます。下部バーが「Guide待機 · GPU」または「翻訳完了 … · GPU」になれば、自動復元できています。CPU環境ではCPUと表示されます。
+
+設定後はLinearを起動してGuideを開くだけです。コードの貼り付け、ファイル選択、補助の手動起動は不要です。復元中は補助がDevToolsを一時的に開くため、Consoleへの入力は待ってください。
+
+翻訳状態はLinear既存の下部ステータスバーに表示します。翻訳中は完了・処理中・待機・失敗の件数を確認でき、マウスを重ねるとモデルやエラー詳細が出ます。「翻訳を停止」で原文に戻り、モデルも終了します。次のLinear起動時には自動復元します。
+
+ログイン時起動を解除する場合は `bun run linear:auto-start disable` を実行し、補助メニューで「終了」します。Linearの更新後は接続確認が必要です。補助の更新後に「権限が必要」のままになる場合は、アクセシビリティ一覧の補助を削除して再追加します。
+
+保存データの削除や復旧は[自動復元の手順](docs/linear-auto-start.md)、手動起動とGPU・CPUの詳細は[通信不要なGuide翻訳](docs/linear-offline-guide.md)を参照してください。Linear 1.32.8でGPU翻訳とLinear再起動後の復元を確認しています。Mac自体の再起動・再ログインは未検証です。[ローカルHTTP接続が使えない理由](docs/linear-desktop-guide.md)も記録しています。
 
 ### PLaMo翻訳
 
@@ -45,7 +85,7 @@ macOS以外では上記の `Option` は `Alt` です。
 
 実行方法とモデルは設定画面で変更します。ページ翻訳と選択翻訳に共通で、初期値はブラウザ実行の0.8Bです。未保存のモデルは「モデルを準備」を押したとき、または初回の翻訳時にダウンロードします。0.8Bは約573MB、2Bは約1.81GBで、端末に保存します。モデルの利用条件は[PLaMo Community License](https://huggingface.co/pfnet/plamo-3-translate-2b-GGUF#license)を参照してください。
 
-翻訳機能がONでブラウザ実行を選んでいる場合、拡張の起動時と翻訳機能・実行方法・モデルの設定変更時に、保存済みの0.8Bまたは2Bをメモリへ読み込み、ウォームアップを済ませます。未保存モデルの自動ダウンロードはしません。準備が終わる前に翻訳を開始した場合は、残りの準備時間を待ちます。翻訳操作前からモデルがメモリを使用します。
+ページ・選択翻訳またはLinear Review Guide翻訳がONでブラウザ実行を選んでいる場合、拡張の起動時と両翻訳機能・実行方法・モデルの設定変更時に、保存済みの0.8Bまたは2Bをメモリへ読み込み、ウォームアップを済ませます。未保存モデルの自動ダウンロードはしません。準備が終わる前に翻訳を開始した場合は、残りの準備時間を待ちます。翻訳操作前からモデルがメモリを使用します。
 
 「モデルを準備」はモデル読込とウォームアップを先に済ませる操作で、設定画面を開くだけではダウンロードしません。
 

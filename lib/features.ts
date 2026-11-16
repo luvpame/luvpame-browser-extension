@@ -11,6 +11,7 @@ export const featureLabels = {
   headingMarkerEnabled: "Notion: 見出しマーカー",
   mergeGuardEnabled: "Devin Review: マージボタン非表示",
   translationEnabled: "PLaMo: ページ・選択翻訳",
+  linearReviewGuideTranslationEnabled: "Linear: Review Guide翻訳",
 } as const;
 export type FeatureKey = keyof typeof featureLabels;
 export type Features = Record<FeatureKey, boolean>;

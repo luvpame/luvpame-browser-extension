@@ -19,10 +19,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it("shows all ten switches and disables them until settings load", async () => {
+it("shows all eleven switches and disables them until settings load", async () => {
   await act(async () => root.render(<FeatureToggles onStatus={vi.fn()} />));
   const inputs = [...container.querySelectorAll("input")];
-  expect(inputs).toHaveLength(10);
+  expect(inputs).toHaveLength(11);
   expect(inputs.every((input) => input.disabled)).toBe(true);
   await act(async () =>
     root.render(
@@ -83,4 +83,22 @@ it("reflects stored changes in the visible switches through the existing watcher
       ?.querySelector("input")?.checked,
   ).toBe(false);
   stop();
+});
+
+it("saves the Guide toggle independently of page translation", async () => {
+  const save = vi.spyOn(browser.storage.local, "set").mockResolvedValue();
+  await act(async () =>
+    root.render(
+      <FeatureToggles
+        features={normalizeFeatures({ translationEnabled: false })}
+        onStatus={vi.fn()}
+      />,
+    ),
+  );
+  const input = [...container.querySelectorAll("label")]
+    .find((label) => label.textContent === "Linear: Review Guide翻訳")!
+    .querySelector("input")!;
+  expect(input.checked).toBe(true);
+  await act(async () => input.click());
+  expect(save).toHaveBeenCalledExactlyOnceWith({ linearReviewGuideTranslationEnabled: false });
 });

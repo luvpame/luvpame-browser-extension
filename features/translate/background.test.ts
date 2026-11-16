@@ -273,6 +273,48 @@ it.each([undefined, { id: 7 }])("rejects removed sidepanel senders (%j)", (tab) 
   expect(respond).not.toHaveBeenCalled();
 });
 
+it("translates the Guide independently while page translation is disabled", async () => {
+  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]![0];
+  const result = await new Promise((resolve) =>
+    listener(
+      { ...request, feature: "linear-review-guide" },
+      { ...sender, url: "https://linear.app/workspace/review/example/review" },
+      resolve,
+    ),
+  );
+  expect(result).toMatchObject({ ok: true, text: "こんにちは" });
+  expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ type: OFFSCREEN_TRANSLATE, text: request.text }),
+  );
+});
+
+it.each([
+  { url: "https://linear.app/workspace/review/example/review", enabled: false },
+  { url: "https://linear.app/workspace/review/example", enabled: true },
+  { url: "https://example.com/workspace/review/example/review", enabled: true },
+])("rejects Guide requests outside the enabled Guide feature (%j)", async ({ url, enabled }) => {
+  api.storage.local.get.mockResolvedValue({ linearReviewGuideTranslationEnabled: enabled });
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]![0];
+  const result = await new Promise((resolve) =>
+    listener({ ...request, feature: "linear-review-guide" }, { ...sender, url }, resolve),
+  );
+  expect(result).toMatchObject({ ok: false });
+  expect(api.runtime.sendMessage).not.toHaveBeenCalledWith(
+    expect.objectContaining({ type: OFFSCREEN_TRANSLATE }),
+  );
+});
+
+it("keeps page translation available when only Guide translation is disabled", async () => {
+  api.storage.local.get.mockResolvedValue({ linearReviewGuideTranslationEnabled: false });
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]![0];
+  const result = await new Promise((resolve) => listener(request, sender, resolve));
+  expect(result).toMatchObject({ ok: true, text: "こんにちは" });
+});
+
 it("never starts inference for a disabled feature or forged sender", async () => {
   registerTranslationBackground();
   const listener = api.runtime.onMessage.addListener.mock.calls[0]?.[0];
@@ -664,7 +706,10 @@ it.each([false, true])(
 );
 
 it.each([
-  { settings: { translationEnabled: false }, error: "翻訳機能はOFF" },
+  {
+    settings: { translationEnabled: false, linearReviewGuideTranslationEnabled: false },
+    error: "翻訳機能はOFF",
+  },
   { settings: { translationBackend: "ollama" }, error: "ブラウザ内翻訳" },
 ])(
   "rejects model preparation for unavailable browser translation: $settings",
@@ -744,16 +789,16 @@ it("automatically prewarms the selected browser model at registration and after 
   );
 });
 
-it.each([{ translationEnabled: false }, { translationBackend: "ollama" }])(
-  "does not prewarm unavailable browser translation: %j",
-  async (settings) => {
-    api.storage.local.get.mockResolvedValue(settings);
-    registerTranslationBackground();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(ensureOffscreen).not.toHaveBeenCalled();
-    expect(api.runtime.sendMessage).not.toHaveBeenCalled();
-  },
-);
+it.each([
+  { translationEnabled: false, linearReviewGuideTranslationEnabled: false },
+  { translationBackend: "ollama" },
+])("does not prewarm unavailable browser translation: %j", async (settings) => {
+  api.storage.local.get.mockResolvedValue(settings);
+  registerTranslationBackground();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(ensureOffscreen).not.toHaveBeenCalled();
+  expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+});
 
 it("discards stale prewarming after settings change while offscreen initialization is pending", async () => {
   let ready: () => void = () => {};
@@ -785,7 +830,10 @@ it("retries prewarming after failure when browser translation is enabled again",
   registerTranslationBackground();
   await vi.waitFor(() => expect(report).toHaveBeenCalled());
   const changed = api.storage.onChanged.addListener.mock.calls[0]?.[0];
-  api.storage.local.get.mockResolvedValue({ translationEnabled: false });
+  api.storage.local.get.mockResolvedValue({
+    translationEnabled: false,
+    linearReviewGuideTranslationEnabled: false,
+  });
   changed({ translationEnabled: { newValue: false } }, "local");
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(api.runtime.sendMessage).not.toHaveBeenCalled();

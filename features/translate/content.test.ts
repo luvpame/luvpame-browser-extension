@@ -33,6 +33,17 @@ afterEach(() => {
 });
 
 describe("ページ翻訳", () => {
+  it("Guideの属性があっても通常の記事の範囲を優先する", async () => {
+    document.body.innerHTML =
+      "<main><article><p>Article paragraph.</p></article><div data-guide-section-text><div data-guide-overview><div><span>Guide explanation.</span></div></div></div></main>";
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle();
+    await tick();
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: TRANSLATE, text: "Article paragraph." }),
+    );
+  });
+
   it("記事の見出し・段落・リストだけを翻訳し、図や操作UIのDOMを変えない", async () => {
     document.body.innerHTML = `<p>Outside article.</p><main><p>Article navigation.</p><article>
       <header><p>Author and publication date.</p></header>

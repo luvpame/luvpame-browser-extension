@@ -28,7 +28,14 @@ assert.deepEqual(
     "http://localhost/*",
   ].sort(),
 );
-assert.equal(manifest.content_scripts.length, 4);
+assert.equal(manifest.content_scripts.length, 5);
+assert(
+  manifest.content_scripts.some(
+    (script: { matches: string[]; js: string[] }) =>
+      script.matches.includes("https://linear.app/*") &&
+      script.js.includes("content-scripts/linear.js"),
+  ),
+);
 assert.equal(manifest.side_panel, undefined);
 assert.equal(manifest.commands["open-easy-article"], undefined);
 assert.equal(manifest.commands["toggle-page-replacement-translation"], undefined);

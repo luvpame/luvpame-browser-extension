@@ -5,6 +5,10 @@ export default defineConfig({
   lint: { ignorePatterns: ["dist/**", ".wxt/**", "vendor/**"] },
   plugins: [WxtVitest()],
   test: {
+    alias: {
+      "offline-plamo-native": new URL("./tests/fixtures/offline-plamo-native.ts", import.meta.url)
+        .pathname,
+    },
     environment: "jsdom",
     include: ["tests/**/*.spec.{ts,tsx}", "features/**/*.test.ts", "features/**/tests/*.spec.ts"],
     exclude: ["dist/**", "node_modules/**"],
