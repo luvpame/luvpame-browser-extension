@@ -6,5 +6,3 @@ node_modules/
 web-ext.config.ts
 *.log
 
-dist/linear-offline/
-dist/linear-auto-start/

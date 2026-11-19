@@ -36,40 +36,11 @@ Devin Reviewのマージボタン非表示はUI上の補助であり、マージ
 
 LinearのPRでGuideタブを開くと、英語の説明文だけを日本語に置き換えます。見出し、操作ボタン、コード差分は翻訳しません。後から追加された説明文や、アプリ内の画面遷移にも対応します。
 
-#### ブラウザ版
-
 1. popupまたは設定画面の「Linear: Review Guide翻訳」をONにします。初期値はONです。
 2. 翻訳設定で実行方法とモデルを選びます。既存のPLaMo翻訳と共用し、ブラウザ実行では初回にモデルを取得します。
 3. LinearのPRでGuideタブを開きます。ボタン操作なしで翻訳が始まり、機能をOFFにすると原文に戻ります。
 
 「PLaMo: ページ・選択翻訳」がOFFでも動作します。ページ翻訳の表示方式にかかわらず、Guideは置き換え表示です。
-
-#### デスクトップ版・macOS
-
-公式Linear.appを変更せず、Guide翻訳だけを使えます。PLaMo 3 Translate 0.8BをLinear内で実行し、GPUを優先します。GPUが使えない場合はCPUに切り替わります。翻訳する文章は外部へ送信しません。Chrome拡張の設定とは独立しています。
-
-初回はmacOS 15以降と[開発環境](#開発)を使い、リポジトリのルートで設定します。
-
-1. 実行ファイルとMac用補助アプリを生成し、モデルを取得して補助を配置します。モデルは約573MBです。既に同じモデルがある場合は、ダウンロードの代わりに `dist/linear-offline/model.gguf` へ配置します。
-
-   ```sh
-   bun run build:linear-auto-start
-   curl --fail --location --output dist/linear-offline/model.gguf 'https://huggingface.co/pfnet/plamo-3-translate-0.8b-GGUF/resolve/main/plamo-3-translate-0.8b-Q4_K_M.gguf'
-   bun run linear:auto-start stage
-   ```
-
-2. `pbcopy < dist/linear-offline/setup.js` で初期設定コードをコピーします。LinearのPR画面で `Cmd+Option+I` を押し、DevToolsのConsoleへ貼り付けて実行します。下部バーのファイル選択で `dist/linear-offline/linear-offline.js` と `model.gguf` を選び、保存とモデル準備が終わるまで待ちます。実行ファイルとモデルはLinear内に保存され、次回から選択不要になります。
-3. `open "$HOME/Applications/Linear翻訳補助.app"` で補助を開き、システム設定 → プライバシーとセキュリティ → アクセシビリティで「Linear翻訳補助」を許可します。
-4. Linearを前面にして、Mac上部の補助メニューから「接続確認」を押します。「実行確認済み」になったら補助メニューで「終了」し、`bun run linear:auto-start enable` を実行します。ログイン時に補助が起動し、Linearの起動を待つ設定になります。
-5. Linearを完全終了・再起動し、前面にしたまま60秒ほど待ちます。下部バーが「Guide待機 · GPU」または「翻訳完了 … · GPU」になれば、自動復元できています。CPU環境ではCPUと表示されます。
-
-設定後はLinearを起動してGuideを開くだけです。コードの貼り付け、ファイル選択、補助の手動起動は不要です。復元中は補助がDevToolsを一時的に開くため、Consoleへの入力は待ってください。
-
-翻訳状態はLinear既存の下部ステータスバーに表示します。翻訳中は完了・処理中・待機・失敗の件数を確認でき、マウスを重ねるとモデルやエラー詳細が出ます。「翻訳を停止」で原文に戻り、モデルも終了します。次のLinear起動時には自動復元します。
-
-ログイン時起動を解除する場合は `bun run linear:auto-start disable` を実行し、補助メニューで「終了」します。Linearの更新後は接続確認が必要です。補助の更新後に「権限が必要」のままになる場合は、アクセシビリティ一覧の補助を削除して再追加します。
-
-保存データの削除や復旧は[自動復元の手順](docs/linear-auto-start.md)、手動起動とGPU・CPUの詳細は[通信不要なGuide翻訳](docs/linear-offline-guide.md)を参照してください。Linear 1.32.8でGPU翻訳とLinear再起動後の復元を確認しています。Mac自体の再起動・再ログインは未検証です。[ローカルHTTP接続が使えない理由](docs/linear-desktop-guide.md)も記録しています。
 
 ### PLaMo翻訳
 
