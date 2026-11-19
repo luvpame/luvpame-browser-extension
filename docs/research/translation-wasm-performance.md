@@ -1,6 +1,22 @@
 # 翻訳エンジンのWASM最適化
 
-追記。実験的な「2B＋0.8B補助」は削除した。専用の`0006-enable-draft-speculation.patch`も削除し、現在の配布物は以下の3パッチで作成したWASMに戻している。[追加実装時の記録](translation-additional-implementation.md)は過去の検証記録として残す。
+2026-11-19。Sakutto の [WebGPU デコード高速化](https://github.com/jammaru/sakutto/pull/111) を、現行の wllama `6647c1ea` と llama.cpp `7d7f028` へ足した。ピンは動かしていない。Sakutto の `0001`、`0002`、`0006` から `0009` は入れていない。
+
+`0011`、`0013`、`0014` は上流のパッチをそのまま適用した。`0010` は、既存の `0004` が `ggml_webgpu_can_use_mmvq` に渡している行数に合わせて、その呼び出しの前後だけを直した。`0012` は、このピンにある layer input の待ちと `slot_audio_step` の後ろへ、同じ挿入を移した。追加する処理は上流と同じ。
+
+| パッチ                                           | 処理                                                                                                                              |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `0010-webgpu-mat-vec-workgroup.patch`            | NVIDIA で subgroup が使え、Q4_K または Q6_K のとき、k-quant の行列×ベクトルの workgroup を行幅に合わせる。それ以外は 256 のまま。 |
+| `0011-greedy-sample-scan.patch`                  | temperature 0 で、最大ロジット以外を返せないサンプラー列は候補配列を作らず最大値を探す。                                          |
+| `0012-backend-argmax.patch`                      | その条件が処理中の全スロットで揃い、出力層が CPU でないとき、GPU で argmax し、選んだトークン番号だけを読み戻す。                 |
+| `0013-get-result-pending-first.patch`            | すでに届いている結果は、次のデコードを回さずに返す。                                                                              |
+| `0014-webgpu-flash-attn-skip-masked-tiles.patch` | flash attention で、workgroup の全行が -inf でマスクした KV タイルは計算しない。                                                  |
+
+この環境には Docker が無い。配布する通常版と互換版は、`scripts/wllama/build-native.sh` と同じ CMake フラグで、Emscripten 4.0.20（`6913738ec5371a88c4af5a80db0ab42bad3de681`）からビルドした。`vendor/wllama/build.json` の image は `emsdk:4.0.20`。digest は、その emsdk の `upstream/bin/clang-22` の SHA-256。
+
+ビルド後の両 WASM に `row_live` と `logits of this row were not read back` がある。直前の配布物にはどちらも無い。翻訳速度は測っていない。Sakutto が RTX 4090 で測ったページ時間は、この拡張の結果ではない。
+
+追記。実験的な「2B＋0.8B補助」は削除した。専用の`0006-enable-draft-speculation.patch`も削除し、その時点の配布物は以下の3パッチで作成したWASMに戻している。[追加実装時の記録](translation-additional-implementation.md)は過去の検証記録として残す。
 
 2026-11-10。Sakuttoの最適化を、現在のwllama 3.13.0とllama.cppへ移植した。翻訳モデル、プロンプト、GPUの2枠と合計8192トークン、CPUの1枠と4096トークンは変更していない。
 

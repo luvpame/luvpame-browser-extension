@@ -10,8 +10,8 @@
   },
   "emscripten": {
     "version": "4.0.20",
-    "image": "emscripten/emsdk:4.0.20-arm64",
-    "digest": "sha256:9bcd8da83ba146da138119daa6a8a5ced30d99610a3cc8755c183f5b929c4af5"
+    "image": "emsdk:4.0.20",
+    "digest": "sha256:fdcf6454c2fa11b4f31057aacbd5d8d5dac89d1f23b7a6c71b712d0c93d59d00"
   },
   "dawn": {
     "tag": "v20260317.182325",
@@ -29,6 +29,26 @@
     {
       "file": "0005-disable-prompt-cache.patch",
       "sha256": "4f0d96d6274dc4f3e89450c968aa9ebca980b2920da91726d53460363b3b5ae2"
+    },
+    {
+      "file": "0010-webgpu-mat-vec-workgroup.patch",
+      "sha256": "3fad7cca68fda31f9c3dc170979269268753636911256b50ac1d73b95e51f6bc"
+    },
+    {
+      "file": "0011-greedy-sample-scan.patch",
+      "sha256": "091144342ed987e3ef4b79176c7d2f5a2d1938bfa7b664e132954542354adeed"
+    },
+    {
+      "file": "0012-backend-argmax.patch",
+      "sha256": "aa351e55ad9b461b7745b8facc71187c812d7cc3c57540eb70dd280243e0661d"
+    },
+    {
+      "file": "0013-get-result-pending-first.patch",
+      "sha256": "cfb9b6cbbb79a8b0e42833810b85b9dfe6f1addd50580c572799be9a053befbe"
+    },
+    {
+      "file": "0014-webgpu-flash-attn-skip-masked-tiles.patch",
+      "sha256": "97fca018692a18eecd1abd7a52c9b1d4e88a65224d684344762d9839f66a95f5"
     }
   ],
   "files": {
@@ -37,16 +57,16 @@
       "sha256": "1cdbb0231eeda4226d56756a6a98815a941b41445c7916dc9c154c0b737cacec"
     },
     "wllama.wasm": {
-      "bytes": 10253728,
-      "sha256": "550f5de81e552a8d57894c852a42a54d6b0e38a88b171c5ae0ff0e0dade669cd"
+      "bytes": 10261367,
+      "sha256": "5fc130d8aa5ae5ed1097c1b12a366f0c070e120209c47829544fc7ef80e63cdd"
     },
     "wllama-compat.js": {
       "bytes": 173601,
-      "sha256": "f1a8a14147d106c77987e3342d89cb3f21f96aea189bb82373997e7931815ff4"
+      "sha256": "a22d58485177758648b6a0748518a8c3e39e7ceffa057506e4b18a94a0cc7b26"
     },
     "wllama-compat.wasm": {
-      "bytes": 18770127,
-      "sha256": "06f027087ab0034c030d8133a0083e2b34c916ee942a2bc9e4e9be083c8bbcec"
+      "bytes": 18782218,
+      "sha256": "7ac090f81c4bb243044c8b9ab11964377f896c1e47d57c0f87fb9827e892d22e"
     }
   }
 }
