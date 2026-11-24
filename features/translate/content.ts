@@ -49,20 +49,25 @@ export function splitTranslationText(text: string): string[] {
   return chunks;
 }
 
-function articleRoots(doc: Document): Element[] {
-  for (const selector of [
-    '[itemprop~="articleBody"]',
-    'main article,[role="main"] article',
-    'main,[role="main"]',
-    "article",
-  ]) {
-    const roots = Array.from(doc.querySelectorAll(selector)).filter(
+function articleParagraphs(doc: Document): Element[] {
+  const roots = (selector: string) => {
+    const found = Array.from(doc.querySelectorAll(selector)).filter(
       (element) => !element.closest(PAGE_EXCLUDED),
     );
-    if (roots.length)
-      return roots.filter((root) => !roots.some((other) => other !== root && other.contains(root)));
-  }
-  return [doc.body];
+    return found.filter((root) => !found.some((other) => other !== root && other.contains(root)));
+  };
+  const body = roots('[itemprop~="articleBody"]');
+  if (body.length) return body.flatMap((root) => paragraphs(root));
+  const main = roots('main,[role="main"]').flatMap((root) => paragraphs(root));
+  const articles = roots('main article,[role="main"] article');
+  const inArticles = main.filter((element) =>
+    articles.some((article) => article.contains(element)),
+  );
+  // 本文を article の外に置き、著者紹介や関連記事のカードだけを article にするサイトがある。
+  if (inArticles.length && inArticles.length * 2 >= main.length) return inArticles;
+  if (main.length) return main;
+  const standalone = roots("article");
+  return (standalone.length ? standalone : [doc.body]).flatMap((root) => paragraphs(root));
 }
 
 function paragraphs(root: Element, blocks = BLOCKS): Element[] {
@@ -502,8 +507,12 @@ export function createTranslationController({
   const refresh = () => {
     if (!active) return;
     const candidates = new Map<Element | Text, Element>();
-    const roots = scope ? Array.from(doc.querySelectorAll(scope.roots)) : articleRoots(doc);
-    for (const element of roots.flatMap((root) => paragraphs(root, scope?.blocks))) {
+    const blocks = scope
+      ? Array.from(doc.querySelectorAll(scope.roots)).flatMap((root) =>
+          paragraphs(root, scope.blocks),
+        )
+      : articleParagraphs(doc);
+    for (const element of blocks) {
       if (active.mode === "below") {
         if (english(sourceText(element))) candidates.set(element, element);
       } else {

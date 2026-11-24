@@ -118,6 +118,22 @@ describe("ページ翻訳", () => {
     );
   });
 
+  it("本文がarticleの外にあり、articleが著者紹介や関連記事だけのページも本文を翻訳する", async () => {
+    document.body.innerHTML = `<main><section><p>First body paragraph.</p><p>Second body paragraph.</p><p>Third body paragraph.</p></section>
+      <article><p>Author biography.</p></article><aside><article><p>Sidebar card.</p></article></aside></main>`;
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle();
+    await tick();
+    expect(send.mock.calls.map(([message]) => message)).toEqual(
+      [
+        "First body paragraph.",
+        "Second body paragraph.",
+        "Third body paragraph.",
+        "Author biography.",
+      ].map((text) => expect.objectContaining({ type: TRANSLATE, text })),
+    );
+  });
+
   it("本文が非本文の領域に変わると訳を取り除き、本文に戻ると翻訳する", async () => {
     document.body.innerHTML = "<main><div><p>Article paragraph.</p></div></main>";
     const original = document.body.innerHTML;
