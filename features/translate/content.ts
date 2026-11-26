@@ -56,7 +56,7 @@ function articleParagraphs(doc: Document): Element[] {
     );
     return found.filter((root) => !found.some((other) => other !== root && other.contains(root)));
   };
-  const body = roots('[itemprop~="articleBody"]');
+  const body = roots('[itemprop~="articleBody"],article[itemprop~="text"]');
   if (body.length) return body.flatMap((root) => paragraphs(root));
   const main = roots('main,[role="main"]').flatMap((root) => paragraphs(root));
   const articles = roots('main article,[role="main"] article');
