@@ -19,10 +19,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it("shows all eleven switches and disables them until settings load", async () => {
+it("shows all twelve switches and disables them until settings load", async () => {
   await act(async () => root.render(<FeatureToggles onStatus={vi.fn()} />));
   const inputs = [...container.querySelectorAll("input")];
-  expect(inputs).toHaveLength(11);
+  expect(inputs).toHaveLength(12);
   expect(inputs.every((input) => input.disabled)).toBe(true);
   await act(async () =>
     root.render(

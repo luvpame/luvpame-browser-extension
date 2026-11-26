@@ -307,6 +307,65 @@ it.each([
   );
 });
 
+it.each(["https://x.com/home", "https://twitter.com/someone/status/1"])(
+  "translates X posts independently of page translation on %s",
+  async (url) => {
+    api.storage.local.get.mockResolvedValue({
+      translationEnabled: false,
+      linearReviewGuideTranslationEnabled: false,
+    });
+    registerTranslationBackground();
+    const listener = api.runtime.onMessage.addListener.mock.calls[0]![0];
+    const result = await new Promise((resolve) =>
+      listener({ ...request, feature: "x-auto-translation" }, { ...sender, url }, resolve),
+    );
+    expect(result).toMatchObject({ ok: true, text: "こんにちは" });
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: OFFSCREEN_TRANSLATE, text: request.text }),
+    );
+  },
+);
+
+it.each([
+  { url: "https://x.com/home", enabled: false },
+  { url: "http://x.com/home", enabled: true },
+  { url: "https://x.com.example.com/home", enabled: true },
+  { url: "https://example.com/x.com/home", enabled: true },
+])("rejects X requests outside the enabled X feature (%j)", async ({ url, enabled }) => {
+  api.storage.local.get.mockResolvedValue({ xAutoTranslationEnabled: enabled });
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]![0];
+  const result = await new Promise((resolve) =>
+    listener({ ...request, feature: "x-auto-translation" }, { ...sender, url }, resolve),
+  );
+  expect(result).toMatchObject({ ok: false });
+  expect(api.runtime.sendMessage).not.toHaveBeenCalledWith(
+    expect.objectContaining({ type: OFFSCREEN_TRANSLATE }),
+  );
+});
+
+it("rejects unknown translation features before routing", async () => {
+  expect(isTranslationRequest({ ...request, feature: "x-auto-translation" })).toBe(true);
+  expect(isTranslationRequest({ ...request, feature: "unknown" })).toBe(false);
+  expect(
+    isTranslationBatchRequest({
+      ...request,
+      type: TRANSLATE_BATCH,
+      texts: ["One", "Two"],
+      feature: "unknown",
+    }),
+  ).toBe(false);
+  registerTranslationBackground();
+  const listener = api.runtime.onMessage.addListener.mock.calls[0]![0];
+  const result = await new Promise((resolve) =>
+    listener({ ...request, feature: "unknown" }, sender, resolve),
+  );
+  expect(result).toMatchObject({ ok: false });
+  expect(api.runtime.sendMessage).not.toHaveBeenCalledWith(
+    expect.objectContaining({ type: OFFSCREEN_TRANSLATE }),
+  );
+});
+
 it("keeps page translation available when only Guide translation is disabled", async () => {
   api.storage.local.get.mockResolvedValue({ linearReviewGuideTranslationEnabled: false });
   registerTranslationBackground();
@@ -707,7 +766,11 @@ it.each([false, true])(
 
 it.each([
   {
-    settings: { translationEnabled: false, linearReviewGuideTranslationEnabled: false },
+    settings: {
+      translationEnabled: false,
+      linearReviewGuideTranslationEnabled: false,
+      xAutoTranslationEnabled: false,
+    },
     error: "翻訳機能はOFF",
   },
   { settings: { translationBackend: "ollama" }, error: "ブラウザ内翻訳" },
@@ -790,7 +853,11 @@ it("automatically prewarms the selected browser model at registration and after 
 });
 
 it.each([
-  { translationEnabled: false, linearReviewGuideTranslationEnabled: false },
+  {
+    translationEnabled: false,
+    linearReviewGuideTranslationEnabled: false,
+    xAutoTranslationEnabled: false,
+  },
   { translationBackend: "ollama" },
 ])("does not prewarm unavailable browser translation: %j", async (settings) => {
   api.storage.local.get.mockResolvedValue(settings);
@@ -798,6 +865,31 @@ it.each([
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(ensureOffscreen).not.toHaveBeenCalled();
   expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+});
+
+it("prewarms when X auto translation alone is turned on", async () => {
+  api.storage.local.get.mockResolvedValue({
+    translationEnabled: false,
+    linearReviewGuideTranslationEnabled: false,
+    xAutoTranslationEnabled: false,
+  });
+  registerTranslationBackground();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(api.runtime.sendMessage).not.toHaveBeenCalled();
+  api.storage.local.get.mockResolvedValue({
+    translationEnabled: false,
+    linearReviewGuideTranslationEnabled: false,
+  });
+  api.storage.onChanged.addListener.mock.calls[0]?.[0](
+    { xAutoTranslationEnabled: { newValue: true } },
+    "local",
+  );
+  await vi.waitFor(() =>
+    expect(api.runtime.sendMessage).toHaveBeenCalledWith({
+      type: "luvpame:offscreen-prewarm-translation",
+      provider: { kind: "browser", model: "0.8b" },
+    }),
+  );
 });
 
 it("discards stale prewarming after settings change while offscreen initialization is pending", async () => {
@@ -833,6 +925,7 @@ it("retries prewarming after failure when browser translation is enabled again",
   api.storage.local.get.mockResolvedValue({
     translationEnabled: false,
     linearReviewGuideTranslationEnabled: false,
+    xAutoTranslationEnabled: false,
   });
   changed({ translationEnabled: { newValue: false } }, "local");
   await new Promise((resolve) => setTimeout(resolve, 0));

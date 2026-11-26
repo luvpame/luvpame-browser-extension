@@ -4,6 +4,7 @@ import { watchFeatures } from "../lib/features";
 import { readTranslationMode } from "../features/translate/settings";
 import { errorText, isRecord } from "../lib/copy-protocol";
 import { createTranslationController } from "../features/translate/content";
+import { createXAutoTranslationController } from "../features/x-auto-translation/content";
 import {
   PAGE_TRANSLATION,
   TRANSLATION_PROGRESS,
@@ -15,10 +16,19 @@ export default defineContentScript({
   matches: ["http://*/*", "https://*/*"],
   main(ctx) {
     const controller = createTranslationController();
+    const x = /^(?:x|twitter)\.com$/.test(location.hostname)
+      ? createXAutoTranslationController()
+      : undefined;
+    let xEnabled = false;
+    let pageActive = false;
+    const syncX = () => x?.setEnabled(xEnabled && !pageActive);
     const ready = new Promise<{ ok: true } | { ok: false; error: string }>((resolve) => {
       const stop = watchFeatures(
         (settings) => {
           controller.setEnabled(settings.translationEnabled);
+          pageActive &&= settings.translationEnabled;
+          xEnabled = settings.xAutoTranslationEnabled;
+          syncX();
           resolve({ ok: true });
         },
         (error) =>
@@ -52,7 +62,12 @@ export default defineContentScript({
           }
           try {
             const mode = await readTranslationMode();
-            if (!ctx.isInvalid) respond(controller.toggle(mode, target));
+            if (ctx.isInvalid) return;
+            x?.setEnabled(false);
+            const result = controller.toggle(mode, target);
+            pageActive = result.active === true;
+            syncX();
+            respond(result);
           } catch (error) {
             if (!ctx.isInvalid) respond({ ok: false, error: errorText(error) });
           }
@@ -68,10 +83,20 @@ export default defineContentScript({
         controller.progress(message.sessionId, message.requestId, message.update);
     };
     browser.runtime.onMessage.addListener(onMessage);
-    ctx.addEventListener(window, "wxt:locationchange", () => controller.reset());
-    ctx.addEventListener(window, "pagehide", () => controller.reset());
+    ctx.addEventListener(window, "wxt:locationchange", () => {
+      controller.reset();
+      pageActive = false;
+      syncX();
+    });
+    ctx.addEventListener(window, "pagehide", () => {
+      controller.reset();
+      pageActive = false;
+      x?.reset();
+      syncX();
+    });
     ctx.onInvalidated(() => {
       controller.dispose();
+      x?.dispose();
       browser.runtime.onMessage.removeListener(onMessage);
     });
   },

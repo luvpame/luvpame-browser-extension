@@ -24,6 +24,7 @@ export type TranslationProvider =
   | { kind: "browser"; model: TranslationModel }
   | { kind: "ollama"; model: string };
 export type TranslationPriority = "selection" | "page";
+export type TranslationFeature = "linear-review-guide" | "x-auto-translation";
 export type TranslationUpdate =
   | { kind: "status"; message: string }
   | { kind: "text"; text: string }
@@ -54,6 +55,7 @@ export type TranslationRequest = {
   requestId: string;
   priority: TranslationPriority;
   viewportDistance?: number;
+  feature?: TranslationFeature;
 };
 export type TranslationBatchRequest = Omit<TranslationRequest, "type" | "text" | "priority"> & {
   type: typeof TRANSLATE_BATCH;
@@ -77,7 +79,10 @@ const hasRequestFields = (value: Record<string, unknown>): boolean =>
   (value.target === "ja" || value.target === "ja-easy") &&
   isSessionId(value.sessionId) &&
   isSessionId(value.requestId) &&
-  (value.viewportDistance === undefined || isViewportDistance(value.viewportDistance));
+  (value.viewportDistance === undefined || isViewportDistance(value.viewportDistance)) &&
+  (value.feature === undefined ||
+    value.feature === "linear-review-guide" ||
+    value.feature === "x-auto-translation");
 export const isTranslationRequest = (value: unknown): value is TranslationRequest =>
   isRecord(value) &&
   value.type === TRANSLATE &&

@@ -1,6 +1,6 @@
 import { browser } from "wxt/browser";
 import { errorText, isRecord } from "../../lib/copy-protocol";
-import { readFeatures } from "../../lib/features";
+import { readFeatures, type FeatureKey, type Features } from "../../lib/features";
 import { ensureOffscreen } from "../../lib/offscreen";
 import { readTranslationSettings } from "./settings";
 import { sendPageTranslationMessage } from "./page-bridge";
@@ -34,7 +34,34 @@ import {
   type TranslationResult,
   type TranslationBatchResult,
   type TargetLanguage,
+  type TranslationFeature,
 } from "./shared";
+
+type TranslationAccess = {
+  setting: FeatureKey;
+  off: string;
+  site?: { url: RegExp; error: string };
+};
+const translationAccess: Record<TranslationFeature | "page", TranslationAccess> = {
+  page: { setting: "translationEnabled", off: "翻訳機能はOFFです。" },
+  "linear-review-guide": {
+    setting: "linearReviewGuideTranslationEnabled",
+    off: "Review Guide翻訳はOFFです。",
+    site: {
+      url: /^https:\/\/linear\.app\/[^/?#]+\/review\/[^/?#]+\/review\/?(?:[?#]|$)/,
+      error: "Review Guideのページではありません。",
+    },
+  },
+  "x-auto-translation": {
+    setting: "xAutoTranslationEnabled",
+    off: "X自動翻訳はOFFです。",
+    site: { url: /^https:\/\/(?:x|twitter)\.com\//, error: "Xのページではありません。" },
+  },
+};
+const translationSettings = Object.values(translationAccess).map(({ setting }) => setting);
+const anyTranslationEnabled = (features: Features) =>
+  translationSettings.some((setting) => features[setting]);
+const prewarmKeys = [...translationSettings, "translationBackend", "translationModel"];
 
 export const registerTranslationBackground = (): void => {
   let prewarming = Promise.resolve();
@@ -45,8 +72,7 @@ export const registerTranslationBackground = (): void => {
       .then(() => menuSync)
       .then(async () => {
         if (revision !== prewarmRevision) return;
-        const features = await readFeatures();
-        if (!features.translationEnabled && !features.linearReviewGuideTranslationEnabled) return;
+        if (!anyTranslationEnabled(await readFeatures())) return;
         const provider = await readTranslationSettings();
         if (provider.kind !== "browser") return;
         await ensureOffscreen();
@@ -79,9 +105,7 @@ export const registerTranslationBackground = (): void => {
       const model = message.model;
       void (async (): Promise<PrepareTranslationResult> => {
         try {
-          const features = await readFeatures();
-          if (!features.translationEnabled && !features.linearReviewGuideTranslationEnabled)
-            throw new Error("翻訳機能はOFFです。");
+          if (!anyTranslationEnabled(await readFeatures())) throw new Error("翻訳機能はOFFです。");
           const provider = await readTranslationSettings();
           if (provider.kind !== "browser")
             throw new Error("モデルの準備はブラウザ内翻訳で利用できます。");
@@ -165,7 +189,6 @@ export const registerTranslationBackground = (): void => {
       return;
     }
     if (message.type !== TRANSLATE && message.type !== TRANSLATE_BATCH) return;
-    const feature = message.feature;
     if (!isTranslationRequest(message) && !isTranslationBatchRequest(message)) {
       respond({ ok: false, error: "翻訳する文章または翻訳先が不正です。" });
       return;
@@ -188,19 +211,10 @@ export const registerTranslationBackground = (): void => {
     void (async (): Promise<TranslationResult | TranslationBatchResult> => {
       try {
         const features = await readFeatures();
-        if (feature === "linear-review-guide") {
-          if (
-            !/^https:\/\/linear\.app\/[^/?#]+\/review\/[^/?#]+\/review\/?(?:[?#]|$)/.test(
-              sender.url ?? "",
-            )
-          )
-            throw new Error("Review Guideのページではありません。");
-          if (!features.linearReviewGuideTranslationEnabled)
-            throw new Error("Review Guide翻訳はOFFです。");
-        } else {
-          if (feature !== undefined) throw new Error("翻訳機能の指定が不正です。");
-          if (!features.translationEnabled) throw new Error("翻訳機能はOFFです。");
-        }
+        const access = translationAccess[message.feature ?? "page"];
+        if (access.site && !access.site.url.test(sender.url ?? ""))
+          throw new Error(access.site.error);
+        if (!features[access.setting]) throw new Error(access.off);
         const provider = await readTranslationSettings();
         await ensureOffscreen();
         if (route.cancelled) throw new Error("翻訳を停止しました。");
@@ -324,15 +338,7 @@ export const registerTranslationBackground = (): void => {
   browser.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if ("translationEnabled" in changes) syncMenus();
-    if (
-      [
-        "translationEnabled",
-        "linearReviewGuideTranslationEnabled",
-        "translationBackend",
-        "translationModel",
-      ].some((key) => key in changes)
-    )
-      prewarm();
+    if (prewarmKeys.some((key) => key in changes)) prewarm();
   });
   registerMenus();
   prewarm();
