@@ -16,6 +16,7 @@ export function createLinearReviewGuideController({
       roots: "[data-guide-section-text] [data-guide-overview]",
       blocks:
         'p,[data-as="p"],li,blockquote,td,th,dt,dd,figcaption,[data-guide-overview] div > span',
+      textUnit: "inline",
     },
     send: (message) =>
       send(

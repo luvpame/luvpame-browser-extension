@@ -85,6 +85,11 @@ function paragraphs(root: Element, blocks = BLOCKS): Element[] {
 type Send = (message: unknown) => Promise<unknown>;
 
 type Output = { host: HTMLElement; output: HTMLElement };
+type Candidate = {
+  element: Element;
+  nodes?: Text[];
+  text: string;
+};
 type Entry = {
   text: string;
   element: Element;
@@ -93,8 +98,11 @@ type Entry = {
   | ({ mode: "below" } & Output)
   | {
       mode: "replace";
+      unit: "node" | "inline";
       node: Text;
       original: string;
+      hidden: Text[];
+      originals: string[];
       applied: string | undefined;
       error: Output | undefined;
     }
@@ -104,7 +112,11 @@ export function createTranslationController({
   doc = document,
   send = (message) => browser.runtime.sendMessage(message),
   scope,
-}: { doc?: Document; send?: Send; scope?: { roots: string; blocks: string } } = {}) {
+}: {
+  doc?: Document;
+  send?: Send;
+  scope?: { roots: string; blocks: string; textUnit?: "inline" };
+} = {}) {
   const win = doc.defaultView;
   if (!win) throw new Error("ページが見つかりません。");
   let enabled = false;
@@ -123,6 +135,7 @@ export function createTranslationController({
   let positionFrame: number | undefined;
   let refreshFrame: number | undefined;
   const renders = new Map<Entry, { text: string; current: () => boolean }>();
+  const inlineOutputs = new WeakSet<Text>();
 
   const discardRender = (entry: Entry) => {
     renders.delete(entry);
@@ -265,18 +278,38 @@ export function createTranslationController({
       if (element.lastChild !== host) element.append(host);
     } else if (element.nextSibling !== host) element.after(host);
   };
-  const unchanged = (entry: Entry) =>
-    entry.mode === "below"
-      ? sourceText(entry.element) === entry.text
-      : entry.element.contains(entry.node) &&
-        !!entry.node.parentElement &&
-        !entry.node.parentElement.closest(PAGE_EXCLUDED) &&
-        entry.node.data === (entry.applied ?? entry.original);
+  const unchanged = (entry: Entry) => {
+    if (entry.mode === "below") return sourceText(entry.element) === entry.text;
+    const inactiveText = entry.unit === "inline" ? "" : entry.original;
+    if (
+      !entry.element.contains(entry.node) ||
+      !entry.node.parentElement ||
+      entry.node.parentElement.closest(PAGE_EXCLUDED) ||
+      entry.node.data !== (entry.applied ?? inactiveText)
+    )
+      return false;
+    if (entry.unit === "node") return true;
+    return entry.hidden.every(
+      (node, index) =>
+        entry.element.contains(node) &&
+        !!node.parentElement &&
+        !node.parentElement.closest(PAGE_EXCLUDED) &&
+        node.data === (entry.applied === undefined ? entry.originals[index] : ""),
+    );
+  };
   const restore = (entry: Entry) => {
     discardRender(entry);
     if (entry.mode === "below") entry.host.remove();
     else {
-      if (entry.node.data === entry.applied) entry.node.data = entry.original;
+      if (entry.unit === "node") {
+        if (entry.node.data === entry.applied) entry.node.data = entry.original;
+      } else {
+        entry.hidden.forEach((node, index) => {
+          const inactiveText = entry.applied === undefined ? entry.originals[index] : "";
+          if (node.data === inactiveText) node.data = entry.originals[index]!;
+        });
+        entry.node.remove();
+      }
       entry.applied = undefined;
       entry.error?.host.remove();
       entry.error = undefined;
@@ -289,6 +322,10 @@ export function createTranslationController({
       const trailing = entry.original.match(/\s*$/)?.[0] ?? "";
       entry.applied = `${leading}${text.trim()}${trailing}`;
       entry.node.data = entry.applied;
+      if (entry.unit === "inline")
+        entry.hidden.forEach((node) => {
+          node.data = "";
+        });
     }
   };
   const queueText = (entry: Entry, text: string, current: () => boolean) => {
@@ -504,9 +541,40 @@ export function createTranslationController({
       }
     }
   };
+  const inlineTextUnits = (element: Element) => {
+    const units: Text[][] = [];
+    let unit: Text[] = [];
+    const flush = () => {
+      if (unit.length) units.push(unit);
+      unit = [];
+    };
+    const walker = doc.createTreeWalker(element, win.NodeFilter.SHOW_TEXT);
+    while (walker.nextNode()) {
+      const node = walker.currentNode;
+      if (!(node instanceof win.Text)) continue;
+      if (
+        !node.parentElement ||
+        node.parentElement.closest(PAGE_EXCLUDED) ||
+        inlineOutputs.has(node)
+      )
+        flush();
+      else unit.push(node);
+    }
+    flush();
+    return units;
+  };
+  const sameTextUnit = (candidate: Candidate, entry: Entry) => {
+    if (entry.mode === "below") return true;
+    if (entry.unit === "node") return !candidate.nodes;
+    return (
+      !!candidate.nodes &&
+      candidate.nodes.length === entry.hidden.length &&
+      candidate.nodes.every((node, index) => node === entry.hidden[index])
+    );
+  };
   const refresh = () => {
     if (!active) return;
-    const candidates = new Map<Element | Text, Element>();
+    const candidates = new Map<Element | Text, Candidate>();
     const blocks = scope
       ? Array.from(doc.querySelectorAll(scope.roots)).flatMap((root) =>
           paragraphs(root, scope.blocks),
@@ -514,7 +582,18 @@ export function createTranslationController({
       : articleParagraphs(doc);
     for (const element of blocks) {
       if (active.mode === "below") {
-        if (english(sourceText(element))) candidates.set(element, element);
+        const text = sourceText(element);
+        if (english(text)) candidates.set(element, { element, text });
+      } else if (scope?.textUnit === "inline") {
+        for (const nodes of inlineTextUnits(element)) {
+          const first = nodes[0];
+          if (first)
+            candidates.set(first, {
+              element,
+              nodes,
+              text: nodes.map((node) => node.data).join(""),
+            });
+        }
       } else {
         const walker = doc.createTreeWalker(element, win.NodeFilter.SHOW_TEXT);
         while (walker.nextNode()) {
@@ -524,39 +603,72 @@ export function createTranslationController({
             node.parentElement &&
             !node.parentElement.closest(PAGE_EXCLUDED)
           )
-            candidates.set(node, element);
+            candidates.set(node, { element, text: node.data });
         }
       }
     }
     for (const [key, entry] of entries) {
-      if (!candidates.has(key) || candidates.get(key) !== entry.element || !unchanged(entry)) {
+      const candidate = candidates.get(key);
+      if (
+        !candidate ||
+        candidate.element !== entry.element ||
+        !sameTextUnit(candidate, entry) ||
+        !unchanged(entry)
+      ) {
         restore(entry);
         entries.delete(key);
       } else if (entry.mode === "below") placeOutput(entry.element, entry.host);
     }
-    for (const [key, element] of candidates) {
+    for (const [key, candidate] of candidates) {
       if (entries.has(key)) continue;
+      const element = candidate.element;
       if (active.mode === "below") {
         const entry: Entry = {
           mode: active.mode,
           element,
-          text: sourceText(element),
+          text: candidate.text,
           ...createOutput(element),
           state: "queued",
         };
         entries.set(key, entry);
         placeOutput(element, entry.host);
-      } else if (key instanceof win.Text && english(key.data)) {
-        entries.set(key, {
-          mode: active.mode,
-          element,
-          node: key,
-          original: key.data,
-          text: key.data.trim(),
-          applied: undefined,
-          error: undefined,
-          state: "queued",
-        });
+      } else if (key instanceof win.Text && english(candidate.text)) {
+        if (candidate.nodes) {
+          const output = doc.createTextNode("");
+          const first = candidate.nodes[0]!;
+          let reference: Node = first;
+          while (reference.parentNode && reference.parentNode !== element)
+            reference = reference.parentNode;
+          element.insertBefore(output, reference);
+          inlineOutputs.add(output);
+          entries.set(key, {
+            mode: active.mode,
+            unit: "inline",
+            element,
+            node: output,
+            original: candidate.text,
+            hidden: candidate.nodes,
+            originals: candidate.nodes.map((node) => node.data),
+            text: candidate.text.trim(),
+            applied: undefined,
+            error: undefined,
+            state: "queued",
+          });
+        } else {
+          entries.set(key, {
+            mode: active.mode,
+            unit: "node",
+            element,
+            node: key,
+            original: key.data,
+            hidden: [],
+            originals: [],
+            text: key.data.trim(),
+            applied: undefined,
+            error: undefined,
+            state: "queued",
+          });
+        }
       }
     }
     updatePositions();

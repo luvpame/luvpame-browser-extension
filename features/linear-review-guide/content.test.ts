@@ -36,7 +36,7 @@ afterEach(() => {
 });
 
 describe("Linear Review Guide翻訳", () => {
-  it("Guideを開いたら説明だけを置換し、リンクとコードと操作UIを保ってOFF時に戻す", async () => {
+  it("Guideを開いたら説明だけを置換し、リンクをまたぐ文は1つの文字列として翻訳してOFF時に戻す", async () => {
     document.body.innerHTML = `<main>
       <h1>PR Review Guide</h1><p>Overview tab summary.</p>
       <div data-guide-sticky-title="true"><span>Run app checks with TypeScript 7</span>
@@ -59,9 +59,7 @@ describe("Linear Review Guide翻訳", () => {
     expect(requests(send)).toEqual(
       [
         "Validate the application before reviewing.",
-        "Read",
-        "the validation guide",
-        "before approving.",
+        "Read the validation guide before approving.",
       ].map((text) =>
         expect.objectContaining({
           type: TRANSLATE,
@@ -74,7 +72,8 @@ describe("Linear Review Guide翻訳", () => {
     expect(excluded.map((element) => element.outerHTML)).toEqual(excludedHTML);
     expect(document.querySelector("a")).toBe(link);
     expect(link.getAttribute("href")).toBe("#tour-section-checks");
-    expect(link.textContent).toBe("日本語の訳");
+    expect(link.textContent).toBe("");
+    expect(link.parentElement?.textContent).toBe("日本語の訳");
     expect(document.querySelector("[data-luvpame-translation]")).toBeNull();
     controller.setEnabled(false);
     expect(document.body.innerHTML).toBe(original);
@@ -139,8 +138,8 @@ describe("Linear Review Guide翻訳", () => {
     window.history.replaceState(null, "", path);
     controller.refresh();
     await tick();
-    expect(requests(send)).toHaveLength(4);
-    expect(document.querySelector("a")?.textContent).toBe("日本語の訳");
+    expect(requests(send)).toHaveLength(2);
+    expect(document.querySelector("a")?.parentElement?.textContent).toBe("日本語の訳");
   });
 
   it("Guideを離れたURL確定後に更新すると復元し、追加された説明も翻訳しない", async () => {
