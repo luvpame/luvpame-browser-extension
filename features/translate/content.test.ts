@@ -134,6 +134,34 @@ describe("ページ翻訳", () => {
     );
   });
 
+  it("GitHubのリポジトリトップではファイル一覧ではなくREADMEを翻訳する", async () => {
+    const rows = [".agents", "docs", "skills", "README.md"]
+      .map(
+        (name) => `<div>
+          <div class="react-directory-truncate"><a href="/repo/tree/main/${name}">${name}</a></div>
+          <div class="react-directory-commit-message"><a href="/repo/commit/1">Update project files</a></div>
+          <div class="react-directory-commit-age"><relative-time>Nov 8, 2026</relative-time></div>
+        </div>`,
+      )
+      .join("");
+    document.body.innerHTML = `<main>
+      <div><a href="/repo/branches">91 Branches</a><a href="/repo/tags">25 Tags</a></div>
+      ${rows}
+      <article class="markdown-body entry-content container-lg" itemprop="text">
+        <h1>open-pstack</h1>
+        <p>Open Pstack brings the agent workflow to Claude Code.</p>
+      </article>
+    </main>`;
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle();
+    await tick();
+    expect(send.mock.calls.map(([message]) => message)).toEqual(
+      ["open-pstack", "Open Pstack brings the agent workflow to Claude Code."].map((text) =>
+        expect.objectContaining({ type: TRANSLATE, text }),
+      ),
+    );
+  });
+
   it("本文が非本文の領域に変わると訳を取り除き、本文に戻ると翻訳する", async () => {
     document.body.innerHTML = "<main><div><p>Article paragraph.</p></div></main>";
     const original = document.body.innerHTML;
