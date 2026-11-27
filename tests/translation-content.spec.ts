@@ -119,7 +119,7 @@ it("replies to page translation through the callback without returning a Promise
   await vi.waitFor(() =>
     expect(respond).toHaveBeenCalledExactlyOnceWith({ ok: true, active: true }),
   );
-  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith("below", "ja");
+  expect(controller.toggle).toHaveBeenCalledExactlyOnceWith("below", "ja", "original");
   expect(controller.setEnabled).toHaveBeenCalledWith(true);
 });
 
@@ -133,19 +133,22 @@ it.each(["below", "replace"])("dispatches both targets with mode %s", async (mod
     const respond = vi.fn();
     expect(listener({ type: PAGE_TRANSLATION, target }, sender, respond)).toBe(true);
     await vi.waitFor(() => expect(respond).toHaveBeenCalled());
-    expect(controller.toggle).toHaveBeenLastCalledWith(mode, target);
+    expect(controller.toggle).toHaveBeenLastCalledWith(mode, target, "original");
   }
 });
-it("reads the display setting again for every operation", async () => {
+it("reads the display and heading settings again for every operation", async () => {
   startContentScript();
   const respond = vi.fn();
   listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond);
   await vi.waitFor(() => expect(respond).toHaveBeenCalled());
   vi.mocked(browser.storage.local.get).mockImplementation(async () => ({
     translationMode: "replace",
+    translationHeadingPolicy: "translate",
   }));
   listener({ type: PAGE_TRANSLATION, target: "ja" }, sender, respond);
-  await vi.waitFor(() => expect(controller.toggle).toHaveBeenLastCalledWith("replace", "ja"));
+  await vi.waitFor(() =>
+    expect(controller.toggle).toHaveBeenLastCalledWith("replace", "ja", "translate"),
+  );
 });
 it("reports display-setting failures and ignores their completion after invalidation", async () => {
   startContentScript();

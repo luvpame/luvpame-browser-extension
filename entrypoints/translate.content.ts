@@ -1,7 +1,7 @@
 import { defineContentScript } from "#imports";
 import { browser } from "wxt/browser";
 import { watchFeatures } from "../lib/features";
-import { readTranslationMode } from "../features/translate/settings";
+import { readHeadingPolicy, readTranslationMode } from "../features/translate/settings";
 import { errorText, isRecord } from "../lib/copy-protocol";
 import { createTranslationController } from "../features/translate/content";
 import { createXAutoTranslationController } from "../features/x-auto-translation/content";
@@ -61,10 +61,13 @@ export default defineContentScript({
             return;
           }
           try {
-            const mode = await readTranslationMode();
+            const [mode, headings] = await Promise.all([
+              readTranslationMode(),
+              readHeadingPolicy(),
+            ]);
             if (ctx.isInvalid) return;
             x?.setEnabled(false);
-            const result = controller.toggle(mode, target);
+            const result = controller.toggle(mode, target, headings);
             pageActive = result.active === true;
             syncX();
             respond(result);

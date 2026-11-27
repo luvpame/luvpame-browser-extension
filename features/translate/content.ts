@@ -9,6 +9,7 @@ import {
   TRANSLATE_BATCH,
   isTranslationResult,
   isTranslationBatchResult,
+  type HeadingPolicy,
   type TranslationPriority,
   type TranslationMode,
   type TargetLanguage,
@@ -19,12 +20,15 @@ const OWN = "data-luvpame-translation";
 const EXCLUDED = `script,style,noscript,code,pre,input,textarea,select,button,svg,canvas,iframe,nav,footer,aside,[contenteditable]:not([contenteditable="false"]),[role="navigation"],[role="menu"],[role="textbox"],[role="banner"],[role="complementary"],[hidden],[aria-hidden="true"],[${OWN}]`;
 const PAGE_EXCLUDED = `${EXCLUDED},header,figure,label,.not-prose,.notranslate,.sr-only:not(.not-sr-only),.visually-hidden:not(.not-visually-hidden),.screen-reader-only,[translate="no"],[role="img"],[role="application"],[role="dialog"],[role="toolbar"]`;
 const BLOCKS = 'p,[data-as="p"],h1,h2,h3,h4,h5,h6,li,blockquote,td,th,dt,dd,figcaption,div';
+const HEADINGS = 'h1,h2,h3,h4,h5,h6,[role="heading"]';
+// 見出しで段落の切り方を変えると、見出しの横にある地の文まで新たに訳すため、段落を選んだ後の文字列からだけ外す。
+const PAGE_EXCLUDED_WITH_HEADINGS = `${PAGE_EXCLUDED},${HEADINGS}`;
 const english = (text: string) => /[A-Za-z]{2,}/.test(text);
-const sourceText = (element: Element) => {
-  if (!element.querySelector(PAGE_EXCLUDED)) return element.textContent?.trim() ?? "";
+const sourceText = (element: Element, excluded = PAGE_EXCLUDED) => {
+  if (!element.querySelector(excluded)) return element.textContent?.trim() ?? "";
   const copy = element.cloneNode(true);
   if (!(copy instanceof Element)) return "";
-  copy.querySelectorAll(PAGE_EXCLUDED).forEach((node) => node.remove());
+  copy.querySelectorAll(excluded).forEach((node) => node.remove());
   return copy.textContent?.trim() ?? "";
 };
 
@@ -120,7 +124,9 @@ export function createTranslationController({
   const win = doc.defaultView;
   if (!win) throw new Error("ページが見つかりません。");
   let enabled = false;
-  let active: { mode: TranslationMode; target: TargetLanguage } | undefined;
+  let active:
+    | { mode: TranslationMode; target: TargetLanguage; headings: HeadingPolicy }
+    | undefined;
   let generation = 0;
   let sessionId = "";
   let runningGeneration: number | undefined;
@@ -278,13 +284,15 @@ export function createTranslationController({
       if (element.lastChild !== host) element.append(host);
     } else if (element.nextSibling !== host) element.after(host);
   };
+  const textExcluded = () =>
+    active?.headings === "original" ? PAGE_EXCLUDED_WITH_HEADINGS : PAGE_EXCLUDED;
   const unchanged = (entry: Entry) => {
-    if (entry.mode === "below") return sourceText(entry.element) === entry.text;
+    if (entry.mode === "below") return sourceText(entry.element, textExcluded()) === entry.text;
     const inactiveText = entry.unit === "inline" ? "" : entry.original;
     if (
       !entry.element.contains(entry.node) ||
       !entry.node.parentElement ||
-      entry.node.parentElement.closest(PAGE_EXCLUDED) ||
+      entry.node.parentElement.closest(textExcluded()) ||
       entry.node.data !== (entry.applied ?? inactiveText)
     )
       return false;
@@ -293,7 +301,7 @@ export function createTranslationController({
       (node, index) =>
         entry.element.contains(node) &&
         !!node.parentElement &&
-        !node.parentElement.closest(PAGE_EXCLUDED) &&
+        !node.parentElement.closest(textExcluded()) &&
         node.data === (entry.applied === undefined ? entry.originals[index] : ""),
     );
   };
@@ -397,7 +405,7 @@ export function createTranslationController({
     entry.text.length <= 120 &&
     !/[\r\n]/.test(entry.text) &&
     !/[.!?。！？]\s*$/.test(entry.text) &&
-    !entry.element.matches("h1,h2,h3,h4,h5,h6") &&
+    !entry.element.closest(HEADINGS) &&
     Array.from(entry.element.children).every((child) => child.hasAttribute(OWN)) &&
     (entry.mode !== "replace" ||
       Array.from(entry.element.childNodes).filter(
@@ -554,7 +562,7 @@ export function createTranslationController({
       if (!(node instanceof win.Text)) continue;
       if (
         !node.parentElement ||
-        node.parentElement.closest(PAGE_EXCLUDED) ||
+        node.parentElement.closest(textExcluded()) ||
         inlineOutputs.has(node)
       )
         flush();
@@ -581,8 +589,9 @@ export function createTranslationController({
         )
       : articleParagraphs(doc);
     for (const element of blocks) {
+      if (active.headings === "original" && element.closest(HEADINGS)) continue;
       if (active.mode === "below") {
-        const text = sourceText(element);
+        const text = sourceText(element, textExcluded());
         if (english(text)) candidates.set(element, { element, text });
       } else if (scope?.textUnit === "inline") {
         for (const nodes of inlineTextUnits(element)) {
@@ -601,7 +610,7 @@ export function createTranslationController({
           if (
             node instanceof win.Text &&
             node.parentElement &&
-            !node.parentElement.closest(PAGE_EXCLUDED)
+            !node.parentElement.closest(textExcluded())
           )
             candidates.set(node, { element, text: node.data });
         }
@@ -855,12 +864,19 @@ export function createTranslationController({
       enabled = value;
       if (!value) reset();
     },
-    toggle(nextMode: TranslationMode = "below", nextTarget: TargetLanguage = "ja") {
+    toggle(
+      nextMode: TranslationMode = "below",
+      nextTarget: TargetLanguage = "ja",
+      nextHeadings: HeadingPolicy = "translate",
+    ) {
       if (!enabled) return { ok: false, error: "翻訳はOFFです。" };
-      const stop = active?.mode === nextMode && active.target === nextTarget;
+      const stop =
+        active?.mode === nextMode &&
+        active.target === nextTarget &&
+        active.headings === nextHeadings;
       reset();
       if (!stop) {
-        active = { mode: nextMode, target: nextTarget };
+        active = { mode: nextMode, target: nextTarget, headings: nextHeadings };
         sessionId = crypto.randomUUID();
         observer.observe(doc.documentElement, {
           subtree: true,

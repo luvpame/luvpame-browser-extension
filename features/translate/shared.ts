@@ -17,6 +17,7 @@ export const OFFSCREEN_CANCEL = "luvpame:offscreen-cancel-translation";
 export const OFFSCREEN_CANCEL_REQUEST = "luvpame:offscreen-cancel-translation-request";
 export const OFFSCREEN_REPRIORITIZE = "luvpame:offscreen-reprioritize";
 export type TranslationMode = "below" | "replace";
+export type HeadingPolicy = "original" | "translate";
 export type TargetLanguage = "ja" | "ja-easy";
 export type TranslationModel = "0.8b" | "2b";
 export type TranslationDevice = "gpu" | "cpu";
@@ -138,6 +139,8 @@ export const isReprioritizeTranslationsRequest = (
   );
 export const isTranslationModel = (value: unknown): value is TranslationModel =>
   value === "0.8b" || value === "2b";
+export const isHeadingPolicy = (value: unknown): value is HeadingPolicy =>
+  value === "original" || value === "translate";
 export const isTranslationProvider = (value: unknown): value is TranslationProvider =>
   isRecord(value) &&
   ((value.kind === "browser" && isTranslationModel(value.model)) ||

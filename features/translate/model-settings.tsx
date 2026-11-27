@@ -3,18 +3,22 @@ import { browser } from "wxt/browser";
 import { errorText } from "../../lib/copy-protocol";
 import {
   DEFAULT_OLLAMA_MODEL,
+  readHeadingPolicy,
   readOllamaModel,
   readTranslationMode,
+  saveHeadingPolicy,
   saveTranslationMode,
   readTranslationModel,
   readTranslationSettings,
   saveTranslationProvider,
 } from "./settings";
 import {
+  isHeadingPolicy,
   isOllamaModel,
   isTranslationModel,
   isPrepareTranslationResult,
   PREPARE_TRANSLATION,
+  type HeadingPolicy,
   type TranslationMode,
   type TranslationModel,
   type TranslationProvider,
@@ -22,6 +26,7 @@ import {
 
 export function TranslationModelSettings() {
   const [mode, setMode] = useState<TranslationMode>("below");
+  const [headings, setHeadings] = useState<HeadingPolicy>("original");
   const [model, setModel] = useState<TranslationModel>("0.8b");
   const [backend, setBackend] = useState<TranslationProvider["kind"]>("browser");
   const [ollamaModel, setOllamaModel] = useState(DEFAULT_OLLAMA_MODEL);
@@ -34,9 +39,11 @@ export function TranslationModelSettings() {
       readTranslationModel(),
       readOllamaModel(),
       readTranslationMode(),
+      readHeadingPolicy(),
     ])
-      .then(([provider, model, ollama, mode]) => {
+      .then(([provider, model, ollama, mode, headings]) => {
         setMode(mode);
+        setHeadings(headings);
         setBackend(provider.kind);
         setModel(model);
         setOllamaModel(ollama);
@@ -103,6 +110,27 @@ export function TranslationModelSettings() {
       >
         <option value="below">原文＋翻訳の二段表示</option>
         <option value="replace">原文を翻訳に置き換え</option>
+      </select>
+      <label htmlFor="translation-headings">ページ翻訳の見出し</label>
+      <select
+        id="translation-headings"
+        value={headings}
+        disabled={!ready}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (!isHeadingPolicy(next)) return;
+          setReady(false);
+          void saveHeadingPolicy(next)
+            .then(() => {
+              setHeadings(next);
+              setStatus("見出しの設定を保存しました。次の翻訳から使用します。");
+            })
+            .catch((error) => setStatus(errorText(error)))
+            .finally(() => setReady(true));
+        }}
+      >
+        <option value="original">見出しは原文のまま</option>
+        <option value="translate">見出しも翻訳</option>
       </select>
       <p className="hint">通常の日本語とやさしい日本語に共通で、次の翻訳から使用します。</p>
       <p className="hint section-description">モデルを選ぶと保存され、次の翻訳から使われます。</p>

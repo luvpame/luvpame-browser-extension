@@ -1252,25 +1252,199 @@ describe.each(["below", "replace"] as const)("表示方式 %s と翻訳先", (mo
   });
 });
 
+describe.each(["below", "replace"] as const)("見出しの翻訳設定 %s", (mode) => {
+  const requested = (send: { mock: { calls: unknown[][] } }) =>
+    send.mock.calls
+      .map(([message]) => message)
+      .filter(isTranslationRequest)
+      .map((message) => message.text);
+  const page = `<main><article>
+      <h1>Article title</h1><div><h2>Why this CLI</h2></div>
+      <h3>Third heading</h3><h4>Fourth heading</h4><h5>Fifth heading</h5><h6>Sixth heading</h6>
+      <div role="heading" aria-level="2">Role heading</div>
+      <div role="heading" aria-level="3"><div>Nested role heading</div></div>
+      <p>Ordinary paragraph.</p>
+    </article></main>`;
+  const headingTexts = [
+    "Article title",
+    "Why this CLI",
+    "Third heading",
+    "Fourth heading",
+    "Fifth heading",
+    "Sixth heading",
+    "Role heading",
+    "Nested role heading",
+  ];
+
+  it("originalではh1〜h6とrole=headingを原文のまま残し、本文だけを翻訳する", async () => {
+    document.body.innerHTML = page;
+    const original = document.body.innerHTML;
+    const send = vi.fn(async (_message: unknown) => success());
+    const controller = mount(send);
+    controller.toggle(mode, "ja", "original");
+    await tick();
+    expect(requested(send)).toEqual(["Ordinary paragraph."]);
+    expect(output()).toEqual(mode === "below" ? ["日本語の訳"] : []);
+    expect(document.querySelector("p")?.textContent).toBe(
+      mode === "replace" ? "日本語の訳" : "Ordinary paragraph.",
+    );
+    expect(controller.toggle(mode, "ja", "original")).toEqual({ ok: true, active: false });
+    expect(document.body.innerHTML).toBe(original);
+  });
+
+  it("translateでは見出しも本文と同じように翻訳する", async () => {
+    document.body.innerHTML = page;
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle(mode, "ja", "translate");
+    await tick();
+    expect(requested(send)).toEqual([...headingTexts, "Ordinary paragraph."]);
+    expect(output()).toHaveLength(mode === "below" ? headingTexts.length + 1 : 0);
+    expect(
+      Array.from(
+        document.querySelectorAll('h1,h2,h3,h4,h5,h6,[role="heading"]'),
+        (heading) => heading.textContent,
+      ),
+    ).toEqual(mode === "replace" ? headingTexts.map(() => "日本語の訳") : headingTexts);
+  });
+
+  it("有効中に見出しの設定を変えると停止せず翻訳し直し、同じ設定で解除する", async () => {
+    document.body.innerHTML = "<main><h2>Why this CLI</h2><p>Ordinary paragraph.</p></main>";
+    const original = document.body.innerHTML;
+    const heading = document.querySelector("h2")!;
+    const send = vi.fn(async (_message: unknown) => success());
+    const controller = mount(send);
+    controller.toggle(mode, "ja", "original");
+    await tick();
+    send.mockClear();
+    expect(controller.toggle(mode, "ja", "translate")).toEqual({ ok: true, active: true });
+    await tick();
+    expect(requested(send)).toEqual(["Why this CLI", "Ordinary paragraph."]);
+    expect(output()).toHaveLength(mode === "below" ? 2 : 0);
+    expect(heading.textContent).toBe(mode === "replace" ? "日本語の訳" : "Why this CLI");
+    send.mockClear();
+    expect(controller.toggle(mode, "ja", "original")).toEqual({ ok: true, active: true });
+    await tick();
+    expect(requested(send)).toEqual(["Ordinary paragraph."]);
+    expect(output()).toHaveLength(mode === "below" ? 1 : 0);
+    expect(heading.textContent).toBe("Why this CLI");
+    expect(controller.toggle(mode, "ja", "original")).toEqual({ ok: true, active: false });
+    expect(document.body.innerHTML).toBe(original);
+  });
+
+  it("originalでは後からrole=headingになった要素の訳を外し、外れると翻訳し直す", async () => {
+    document.body.innerHTML = "<main><div>Why this CLI</div><p>Ordinary paragraph.</p></main>";
+    const region = document.querySelector("main > div")!;
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle(mode, "ja", "original");
+    await tick();
+    expect(requested(send)).toEqual(["Why this CLI", "Ordinary paragraph."]);
+    region.setAttribute("role", "heading");
+    await tick();
+    expect(region.textContent).toBe("Why this CLI");
+    expect(output()).toHaveLength(mode === "below" ? 1 : 0);
+    send.mockClear();
+    region.removeAttribute("role");
+    await tick();
+    expect(requested(send)).toEqual(["Why this CLI"]);
+    expect(output()).toHaveLength(mode === "below" ? 2 : 0);
+    expect(region.textContent).toBe(mode === "replace" ? "日本語の訳" : "Why this CLI");
+  });
+
+  const mixed =
+    '<main><div><span role="heading" aria-level="2">Why this CLI</span> Loose text.</div></main>';
+
+  it("originalでは段落の中のrole=headingを原文のまま残し、残りの本文を翻訳する", async () => {
+    document.body.innerHTML = mixed;
+    const original = document.body.innerHTML;
+    const send = vi.fn(async (_message: unknown) => success());
+    const controller = mount(send);
+    controller.toggle(mode, "ja", "original");
+    await tick();
+    expect(requested(send)).toEqual(["Loose text."]);
+    expect(output()).toEqual(mode === "below" ? ["日本語の訳"] : []);
+    expect(document.querySelector('[role="heading"]')?.textContent).toBe("Why this CLI");
+    expect(document.querySelector("main > div")?.textContent).toBe(
+      mode === "replace" ? "Why this CLI 日本語の訳" : "Why this CLI Loose text.",
+    );
+    controller.toggle(mode, "ja", "original");
+    expect(document.body.innerHTML).toBe(original);
+  });
+
+  it("translateでは段落の中のrole=headingも残りの本文と一緒に翻訳する", async () => {
+    document.body.innerHTML = mixed;
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle(mode, "ja", "translate");
+    await tick();
+    expect(requested(send)).toEqual(
+      mode === "below" ? ["Why this CLI Loose text."] : ["Why this CLI", "Loose text."],
+    );
+    expect(output()).toEqual(mode === "below" ? ["日本語の訳"] : []);
+    expect(document.querySelector("main > div")?.textContent).toBe(
+      mode === "replace" ? "日本語の訳 日本語の訳" : "Why this CLI Loose text.",
+    );
+  });
+
+  it("originalでは段落の中で後からrole=headingになった部分を原文に戻し、外れると翻訳し直す", async () => {
+    document.body.innerHTML = "<main><div><span>Why this CLI</span> Loose text.</div></main>";
+    const span = document.querySelector("span")!;
+    const send = vi.fn(async (_message: unknown) => success());
+    mount(send).toggle(mode, "ja", "original");
+    await tick();
+    send.mockClear();
+    span.setAttribute("role", "heading");
+    await tick();
+    expect(requested(send)).toEqual(mode === "below" ? ["Loose text."] : []);
+    expect(output()).toEqual(mode === "below" ? ["日本語の訳"] : []);
+    expect(document.querySelector("main > div")?.textContent).toBe(
+      mode === "replace" ? "Why this CLI 日本語の訳" : "Why this CLI Loose text.",
+    );
+    send.mockClear();
+    span.removeAttribute("role");
+    await tick();
+    expect(requested(send)).toEqual(
+      mode === "below" ? ["Why this CLI Loose text."] : ["Why this CLI"],
+    );
+    expect(output()).toEqual(mode === "below" ? ["日本語の訳"] : []);
+    expect(span.textContent).toBe(mode === "replace" ? "日本語の訳" : "Why this CLI");
+  });
+
+  it.each(["original", "translate"] as const)(
+    "%sでも見出しを含むdivの地の文は新たに翻訳しない",
+    async (headings) => {
+      document.body.innerHTML =
+        "<main><div><h2>Why this CLI</h2>Loose text.</div><p>Ordinary paragraph.</p></main>";
+      const send = vi.fn(async (_message: unknown) => success());
+      mount(send).toggle(mode, "ja", headings);
+      await tick();
+      expect(requested(send)).toEqual(
+        headings === "original" ? ["Ordinary paragraph."] : ["Why this CLI", "Ordinary paragraph."],
+      );
+      expect(document.querySelector("main > div")?.lastChild?.textContent).toBe("Loose text.");
+    },
+  );
+});
+
 it("keeps the first paragraph and headings separate while batching plain short labels", async () => {
   document.body.innerHTML =
-    "<article><h1>Article heading</h1><p>Version 3</p><p>Saved settings</p><p>Next action</p></article>";
+    '<article><h1>Article heading</h1><div role="heading">Role heading</div><div role="heading"><div>Nested heading</div></div><p>Version 3</p><p>Saved settings</p><p>Next action</p></article>';
   const send = vi.fn(async (message: unknown) => {
     if (isTranslationBatchRequest(message))
       return { ok: true, texts: ["バージョン3", "設定済み", "次へ"], device: "gpu" };
     return success("見出し");
   });
   const controller = mount(send);
-  controller.toggle();
+  controller.toggle("below", "ja", "translate");
   await tick();
   expect(send.mock.calls.map(([message]) => message)).toEqual([
     expect.objectContaining({ type: TRANSLATE, text: "Article heading" }),
+    expect.objectContaining({ type: TRANSLATE, text: "Role heading" }),
+    expect.objectContaining({ type: TRANSLATE, text: "Nested heading" }),
     expect.objectContaining({
       type: TRANSLATE_BATCH,
       texts: ["Version 3", "Saved settings", "Next action"],
     }),
   ]);
-  expect(output()).toEqual(["見出し", "バージョン3", "設定済み", "次へ"]);
+  expect(output()).toEqual(["見出し", "見出し", "見出し", "バージョン3", "設定済み", "次へ"]);
 });
 
 it("keeps link fragments out of short-label batches in replacement mode", async () => {

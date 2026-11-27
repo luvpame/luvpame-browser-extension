@@ -6,7 +6,10 @@ import {
   saveTranslationProvider,
   readTranslationMode,
   saveTranslationMode,
+  readHeadingPolicy,
+  saveHeadingPolicy,
 } from "./settings";
+import type { HeadingPolicy } from "./shared";
 
 afterEach(() => vi.restoreAllMocks());
 it.each([{}, { translationModel: "invalid", translationBackend: "invalid" }])(
@@ -56,6 +59,32 @@ it("saves and reloads replacement mode", async () => {
   vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
   await saveTranslationMode("replace");
   expect(await readTranslationMode()).toBe("replace");
+});
+
+it.each([undefined, null, "invalid", "original"])(
+  "keeps headings original for an invalid or missing heading policy %j",
+  async (translationHeadingPolicy) => {
+    vi.spyOn(browser.storage.local, "get").mockImplementation(async () => ({
+      translationHeadingPolicy,
+    }));
+    expect(await readHeadingPolicy()).toBe("original");
+  },
+);
+it("saves and reloads each heading policy", async () => {
+  let stored = {};
+  vi.spyOn(browser.storage.local, "set").mockImplementation(async (value) => {
+    stored = value;
+  });
+  vi.spyOn(browser.storage.local, "get").mockImplementation(async () => stored);
+  await saveHeadingPolicy("translate");
+  expect(await readHeadingPolicy()).toBe("translate");
+  await saveHeadingPolicy("original");
+  expect(await readHeadingPolicy()).toBe("original");
+});
+it("rejects an invalid heading policy without saving it", async () => {
+  const save = vi.spyOn(browser.storage.local, "set").mockResolvedValue();
+  await expect(saveHeadingPolicy("invalid" as HeadingPolicy)).rejects.toThrow(Error);
+  expect(save).not.toHaveBeenCalled();
 });
 
 it("preserves an explicitly saved 2B model", async () => {

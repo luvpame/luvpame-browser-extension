@@ -1,7 +1,9 @@
 import { browser } from "wxt/browser";
 import {
+  isHeadingPolicy,
   isOllamaModel,
   isTranslationModel,
+  type HeadingPolicy,
   type TranslationMode,
   type TranslationModel,
   type TranslationProvider,
@@ -61,3 +63,15 @@ export const readTranslationMode = async (): Promise<TranslationMode> => {
 };
 export const saveTranslationMode = (mode: TranslationMode): Promise<void> =>
   browser.storage.local.set({ [TRANSLATION_MODE_KEY]: mode });
+
+export const TRANSLATION_HEADING_POLICY_KEY = "translationHeadingPolicy";
+export const readHeadingPolicy = async (): Promise<HeadingPolicy> => {
+  const stored = await browser.storage.local.get(TRANSLATION_HEADING_POLICY_KEY);
+  return isHeadingPolicy(stored[TRANSLATION_HEADING_POLICY_KEY])
+    ? stored[TRANSLATION_HEADING_POLICY_KEY]
+    : "original";
+};
+export const saveHeadingPolicy = async (policy: HeadingPolicy): Promise<void> => {
+  if (!isHeadingPolicy(policy)) throw new Error("見出しの翻訳設定が不正です。");
+  await browser.storage.local.set({ [TRANSLATION_HEADING_POLICY_KEY]: policy });
+};

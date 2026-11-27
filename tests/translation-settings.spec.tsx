@@ -129,6 +129,38 @@ it("saves the display mode and restores it after reopening settings", async () =
   await act(async () => root.render(<TranslationModelSettings />));
   expect(container.querySelector<HTMLSelectElement>("#translation-mode")?.value).toBe("replace");
 });
+it("keeps headings original by default and restores the saved heading policy", async () => {
+  let translationHeadingPolicy: unknown;
+  vi.mocked(browser.storage.local.get).mockImplementation(async () => ({
+    translationHeadingPolicy,
+  }));
+  vi.mocked(browser.storage.local.set).mockImplementation(async (value) => {
+    if ("translationHeadingPolicy" in value)
+      translationHeadingPolicy = value.translationHeadingPolicy;
+  });
+  await act(async () => root.render(<TranslationModelSettings />));
+  const select = container.querySelector<HTMLSelectElement>("#translation-headings")!;
+  expect(container.querySelector('label[for="translation-headings"]')?.textContent).toBe(
+    "ページ翻訳の見出し",
+  );
+  expect(Array.from(select.options, (option) => [option.value, option.textContent])).toEqual([
+    ["original", "見出しは原文のまま"],
+    ["translate", "見出しも翻訳"],
+  ]);
+  expect(select.value).toBe("original");
+  await act(async () => {
+    select.value = "translate";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(translationHeadingPolicy).toBe("translate");
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("次の翻訳から使用");
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await act(async () => root.render(<TranslationModelSettings />));
+  expect(container.querySelector<HTMLSelectElement>("#translation-headings")?.value).toBe(
+    "translate",
+  );
+});
 it("keeps the saved mode selected when saving fails", async () => {
   await act(async () => root.render(<TranslationModelSettings />));
   vi.mocked(browser.storage.local.set).mockRejectedValueOnce(new Error("保存できません"));

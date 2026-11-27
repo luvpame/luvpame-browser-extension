@@ -4,9 +4,19 @@ import { browser } from "wxt/browser";
 import { watchFeatures, type Features } from "../../lib/features";
 import { COPY_REQUEST, type CopyKind, isRecord, errorText } from "../../lib/copy-protocol";
 import { FeatureToggles } from "../../lib/feature-toggles";
-import { type TargetLanguage, type TranslationMode } from "../../features/translate/shared";
+import {
+  isHeadingPolicy,
+  type HeadingPolicy,
+  type TargetLanguage,
+  type TranslationMode,
+} from "../../features/translate/shared";
 import { sendPageTranslationMessage } from "../../features/translate/page-bridge";
-import { readTranslationMode, saveTranslationMode } from "../../features/translate/settings";
+import {
+  readHeadingPolicy,
+  readTranslationMode,
+  saveHeadingPolicy,
+  saveTranslationMode,
+} from "../../features/translate/settings";
 import "../../lib/ui.css";
 
 function Popup() {
@@ -15,9 +25,13 @@ function Popup() {
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<TranslationMode>();
+  const [headings, setHeadings] = useState<HeadingPolicy>();
   useEffect(() => {
     void readTranslationMode()
       .then(setMode)
+      .catch((error) => setStatus(errorText(error)));
+    void readHeadingPolicy()
+      .then(setHeadings)
       .catch((error) => setStatus(errorText(error)));
     void browser.tabs
       .query({ active: true, currentWindow: true })
@@ -137,6 +151,27 @@ function Popup() {
       >
         <option value="below">原文＋翻訳の二段表示</option>
         <option value="replace">原文を翻訳に置き換え</option>
+      </select>
+      <label htmlFor="translation-headings">ページ翻訳の見出し</label>
+      <select
+        id="translation-headings"
+        value={headings ?? "original"}
+        disabled={busy || headings === undefined}
+        onChange={(event) => {
+          const next = event.target.value;
+          if (busy || headings === undefined || !isHeadingPolicy(next)) return;
+          setBusy(true);
+          void saveHeadingPolicy(next)
+            .then(() => {
+              setHeadings(next);
+              setStatus("見出しの設定を保存しました。次の翻訳から使用します。");
+            })
+            .catch((error) => setStatus(errorText(error)))
+            .finally(() => setBusy(false));
+        }}
+      >
+        <option value="original">見出しは原文のまま</option>
+        <option value="translate">見出しも翻訳</option>
       </select>
       <div className="popup-actions translation-actions">
         <button
